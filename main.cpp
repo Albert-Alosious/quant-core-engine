@@ -26,7 +26,6 @@ int main() {
   quant::MarketDataEvent md;
   md.symbol = "AAPL";
   md.price = 150.25;
-  md.quantity = 100.0;
   md.timestamp = std::chrono::system_clock::now();
 
   bus.publish(md);
