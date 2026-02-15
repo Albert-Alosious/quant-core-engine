@@ -118,6 +118,16 @@ class EventLoopThread {
   // without adding a "close" to ThreadSafeQueue. wait_for() with timeout
   // keeps the loop responsive to stop() while avoiding busy-wait.
   // Runs only on the worker thread. Called by start() via std::thread.
+  //
+  // Design note (temporary polling): This is cooperative shutdown. The
+  // try_pop() + wait_for(timeout) approach introduces (1) up to timeout
+  // wakeup latency on stop(), (2) periodic wakeups when idle, (3) extra
+  // CPU wake cycles. For production trading engines, prefer interruptible
+  // blocking wait: e.g. ThreadSafeQueue::blocking_pop_with_stop() that
+  // unblocks on either an item or a stop signal, or a stop token inside the
+  // queue. Then the loop can be "while (running_) { Event e = queue.pop();
+  // publish(e); }" with no polling. This polling design is acceptable for
+  // now but should be replaced when latency and idle wakeups matter.
   // -------------------------------------------------------------------------
   void run();
 

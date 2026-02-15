@@ -7,7 +7,12 @@ namespace {
 
 // How long the worker thread waits when the queue is empty before re-checking
 // running_. Short enough that stop() is responsive; long enough to avoid
-// busy-wait. 10 ms is a reasonable default for a trading engine event loop.
+// busy-wait.
+//
+// Trade-off: This timeout causes (1) up to 10 ms shutdown latency, (2) wakeups
+// every 10 ms when idle, (3) unnecessary CPU wake cycles. For production,
+// replace with interruptible blocking wait (e.g. queue.pop() that unblocks
+// on stop token) so the loop blocks only on real work—no polling.
 constexpr auto kIdleWaitTimeout = std::chrono::milliseconds(10);
 
 }  // namespace
@@ -100,6 +105,10 @@ void EventLoopThread::run() {
     // predicate [this] { return !running_.load(); } is checked before waiting
     // and after any wakeup; if running_ is false we exit wait_for and then
     // exit the loop. This handles both timeout and explicit notify in stop().
+    //
+    // Future improvement: use interruptible blocking wait (e.g. queue method
+    // that blocks until item or stop), so we only wake on real events—no
+    // fixed-interval polling.
     std::unique_lock lock(stop_mutex_);
     stop_cv_.wait_for(lock, kIdleWaitTimeout,
                      [this] { return !running_.load(); });
