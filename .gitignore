@@ -1,0 +1,10 @@
+build/
+*.o
+*.a
+*.so
+*.dylib
+quant_engine
+.vscode/
+.idea/
+*.swp
+*.swo
