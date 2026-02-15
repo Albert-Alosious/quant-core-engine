@@ -1,4 +1,5 @@
 add_library(core_lib
+  src/dummy_strategy.cpp
   src/event_bus.cpp
   src/event_loop_thread.cpp
 )
