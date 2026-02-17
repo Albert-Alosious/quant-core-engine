@@ -1,6 +1,8 @@
 #pragma once
 
 #include "event_types.hpp"
+#include "order_event.hpp"
+#include "execution_report_event.hpp"
 #include <variant>
 
 namespace quant {
@@ -21,7 +23,14 @@ namespace quant {
 // - Extensible: adding a new event type means adding it to the variant and
 //   updating all visit/get_if sites; the compiler enforces completeness.
 // -----------------------------------------------------------------------------
-using Event = std::variant<MarketDataEvent, SignalEvent, OrderEvent,
-                          RiskRejectEvent, FillEvent, HeartbeatEvent>;
+using Event = std::variant<
+    MarketDataEvent,
+    SignalEvent,
+    OrderEvent,
+    RiskRejectEvent,
+    FillEvent,
+    HeartbeatEvent,
+    ExecutionReportEvent>;
 
 }  // namespace quant
+

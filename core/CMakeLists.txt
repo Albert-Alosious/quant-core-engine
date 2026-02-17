@@ -1,5 +1,7 @@
 add_library(core_lib
   src/dummy_strategy.cpp
+  src/risk_engine.cpp
+  src/execution_engine.cpp
   src/event_bus.cpp
   src/event_loop_thread.cpp
 )

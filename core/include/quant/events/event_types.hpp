@@ -50,23 +50,6 @@ struct SignalEvent {
 };
 
 // -----------------------------------------------------------------------------
-// OrderEvent
-// -----------------------------------------------------------------------------
-// Responsibility: Represents an order request flowing from router toward
-// execution (after risk approval).
-// Why in architecture: Risk + execution thread consumes these. Keeps order
-// state in events, not in global mutable structures.
-// -----------------------------------------------------------------------------
-struct OrderEvent {
-  std::string order_id;     // Unique id for this order (for tracking/fills)
-  std::string symbol;
-  enum class Side { Buy, Sell } side{Side::Buy};
-  double quantity{0.0};      // Order size
-  enum class OrderType { Market, Limit } order_type{OrderType::Market};
-  double limit_price{0.0};   // Used only when order_type is Limit
-  Timestamp timestamp{};
-  std::uint64_t sequence_id{0};
-};
 
 // -----------------------------------------------------------------------------
 // RiskRejectEvent
