@@ -19,10 +19,10 @@
 // -----------------------------------------------------------------------------
 
 #include "quant/concurrent/event_loop_thread.hpp"
-#include "quant/events/event_types.hpp"          // MarketDataEvent, SignalEvent
-#include "quant/events/execution_report_event.hpp"  // ExecutionReportEvent
-#include "quant/risk/risk_engine.hpp"
+#include "quant/events/event_types.hpp" // MarketDataEvent, SignalEvent
+#include "quant/events/execution_report_event.hpp" // ExecutionReportEvent
 #include "quant/execution/execution_engine.hpp"
+#include "quant/risk/risk_engine.hpp"
 #include "quant/strategy/dummy_strategy.hpp"
 #include <chrono>
 #include <iostream>
@@ -53,7 +53,7 @@ int main() {
   // boundary.
   // -------------------------------------------------------------------------
   strategy_loop.eventBus().subscribe<quant::SignalEvent>(
-      [&risk_execution_loop](const quant::SignalEvent& e) {
+      [&risk_execution_loop](const quant::SignalEvent &e) {
         risk_execution_loop.push(e);
       });
 
@@ -81,10 +81,9 @@ int main() {
   // crossed threads (strategy_loop -> push -> risk_execution_loop -> publish).
   // -------------------------------------------------------------------------
   risk_execution_loop.eventBus().subscribe<quant::SignalEvent>(
-      [](const quant::SignalEvent& e) {
+      [](const quant::SignalEvent &e) {
         std::cout << "[Risk/Execution] received SignalEvent: strategy="
-                  << e.strategy_id << " symbol=" << e.symbol
-                  << " side="
+                  << e.strategy_id << " symbol=" << e.symbol << " side="
                   << (e.side == quant::SignalEvent::Side::Buy ? "Buy" : "Sell")
                   << " strength=" << e.strength << "\n";
       });
@@ -93,13 +92,12 @@ int main() {
   // Risk/execution side: log ExecutionReportEvent to prove full lifecycle.
   // -------------------------------------------------------------------------
   risk_execution_loop.eventBus().subscribe<quant::ExecutionReportEvent>(
-      [](const quant::ExecutionReportEvent& e) {
-        std::cout << "[ExecutionReport] order_id=" << e.order_id
-                  << " status="
+      [](const quant::ExecutionReportEvent &e) {
+        std::cout << "[ExecutionReport] order_id=" << e.order_id << " status="
                   << (e.status == quant::ExecutionStatus::Filled ? "Filled"
-                                                                  : "Rejected")
-                  << " qty=" << e.filled_quantity
-                  << " price=" << e.fill_price << "\n";
+                                                                 : "Rejected")
+                  << " qty=" << e.filled_quantity << " price=" << e.fill_price
+                  << "\n";
       });
 
   // -------------------------------------------------------------------------
@@ -131,4 +129,3 @@ int main() {
 
   return 0;
 }
-

@@ -9,3 +9,17 @@ add_subdirectory(core)
 
 add_executable(quant_engine main.cpp)
 target_link_libraries(quant_engine core_lib)
+
+# -----------------------------------------------------------------------------
+# Google Test (fetched at configure time — no system install needed)
+# -----------------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG        v1.15.2
+)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+add_subdirectory(tests)
