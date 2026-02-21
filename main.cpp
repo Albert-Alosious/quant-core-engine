@@ -1,42 +1,95 @@
 // -----------------------------------------------------------------------------
 // quant_engine — single executable entry point (per architecture.md).
 //
-// TradingEngine owns all threads and components. main() only needs to:
-//   1) Create the engine.
-//   2) Start it.
-//   3) Subscribe for logging (optional).
-//   4) Inject test market data.
-//   5) Wait and shut down.
+// Phase 2 "Simulation Mode":
+//   1) Create a SimulationTimeProvider (the engine's clock for backtesting).
+//   2) Create the TradingEngine and start it.
+//   3) Subscribe logging callbacks to observe the full pipeline.
+//   4) Create a MarketDataGateway that receives JSON ticks from Python over
+//      ZeroMQ, advances the simulation clock, and pushes MarketDataEvent
+//      into the engine's strategy loop.
+//   5) Run the gateway's recv loop on the main thread (blocks until the
+//      Python feeder finishes and the gateway times out, or until Ctrl-C).
+//   6) Shut down cleanly.
 //
-// No global state; TradingEngine owns everything.
+// Thread layout:
+//   main thread        → MarketDataGateway::run() (ZMQ recv loop)
+//   strategy thread    → DummyStrategy callbacks
+//   risk/exec thread   → RiskEngine + ExecutionEngine callbacks
+//
+// No global state; TradingEngine owns the event loops and components.
+// SimulationTimeProvider and MarketDataGateway are stack-local in main().
 // -----------------------------------------------------------------------------
 
 #include "quant/engine/trading_engine.hpp"
+#include "quant/events/event.hpp"
 #include "quant/events/event_types.hpp"
 #include "quant/events/execution_report_event.hpp"
+#include "quant/gateway/market_data_gateway.hpp"
+#include "quant/time/simulation_time_provider.hpp"
 
-#include <chrono>
+#include <csignal>
 #include <iostream>
-#include <thread>
+
+// -----------------------------------------------------------------------------
+// Global pointer for signal handler access.
+// This is the ONLY global in the program and it is a raw pointer to a
+// stack-local object — not global mutable state in the architectural sense.
+// It exists solely so the SIGINT handler can call gateway->stop() to unblock
+// the ZMQ recv loop. The pointer is set once before signal delivery is
+// possible and never modified after.
+// -----------------------------------------------------------------------------
+static quant::MarketDataGateway* g_gateway_ptr = nullptr;
+
+// -----------------------------------------------------------------------------
+// sigint_handler
+// -----------------------------------------------------------------------------
+// @brief  POSIX signal handler for SIGINT (Ctrl-C).
+//
+// @param  signum  The signal number (always SIGINT here).
+//
+// @details
+// Calls gateway->stop() which sets an atomic flag. The gateway's recv loop
+// (running on the main thread) will notice this within its ZMQ_RCVTIMEO
+// window (100 ms) and return from run(). After that, main() continues to
+// engine.stop() for clean shutdown.
+//
+// Only async-signal-safe operations are used: atomic store (inside stop())
+// and write() (inside the iostream call — technically not signal-safe, but
+// acceptable for a development binary; production would use write(2)).
+// -----------------------------------------------------------------------------
+static void sigint_handler(int /*signum*/) {
+  std::cout << "\n[main] SIGINT received. Shutting down...\n";
+  if (g_gateway_ptr != nullptr) {
+    g_gateway_ptr->stop();
+  }
+}
 
 int main() {
-  quant::TradingEngine engine;
+  // -------------------------------------------------------------------------
+  // 1) Create the simulation clock.
+  // SimulationTimeProvider starts at time 0. The MarketDataGateway will
+  // advance it to each tick's timestamp_ms before publishing the event.
+  // -------------------------------------------------------------------------
+  quant::SimulationTimeProvider sim_clock;
 
   // -------------------------------------------------------------------------
-  // Subscribe for logging BEFORE start so we see all events from the first
-  // tick. Subscribers registered on the risk_execution_loop bus will have
-  // their callbacks run on that loop's worker thread.
+  // 2) Create and start the TradingEngine.
   // -------------------------------------------------------------------------
+  quant::TradingEngine engine;
+
+  // Subscribe logging callbacks BEFORE start() so we see every event from
+  // the first tick. These callbacks run on the risk_execution_loop thread.
   engine.riskExecutionEventBus().subscribe<quant::SignalEvent>(
-      [](const quant::SignalEvent &e) {
-        std::cout << "[Risk/Execution] received SignalEvent: strategy="
+      [](const quant::SignalEvent& e) {
+        std::cout << "[Risk/Execution] SignalEvent: strategy="
                   << e.strategy_id << " symbol=" << e.symbol << " side="
                   << (e.side == quant::SignalEvent::Side::Buy ? "Buy" : "Sell")
                   << " strength=" << e.strength << "\n";
       });
 
   engine.riskExecutionEventBus().subscribe<quant::ExecutionReportEvent>(
-      [](const quant::ExecutionReportEvent &e) {
+      [](const quant::ExecutionReportEvent& e) {
         std::cout << "[ExecutionReport] order_id=" << e.order_id << " status="
                   << (e.status == quant::ExecutionStatus::Filled ? "Filled"
                                                                  : "Rejected")
@@ -44,32 +97,60 @@ int main() {
                   << "\n";
       });
 
-  // -------------------------------------------------------------------------
-  // Start the engine — spawns threads, wires components.
-  // -------------------------------------------------------------------------
+  // Also log MarketDataEvent arrival on the strategy bus to confirm the
+  // gateway → strategy_loop path is working.
+  engine.strategyEventBus().subscribe<quant::MarketDataEvent>(
+      [&sim_clock](const quant::MarketDataEvent& e) {
+        std::cout << "[Strategy] MarketDataEvent: symbol=" << e.symbol
+                  << " price=" << e.price << " volume=" << e.quantity
+                  << " sim_clock=" << sim_clock.now_ms() << "\n";
+      });
+
   engine.start();
 
   // -------------------------------------------------------------------------
-  // Inject a single test MarketDataEvent.
-  // Flow: MarketDataEvent → DummyStrategy → SignalEvent → (cross-thread)
-  //       → RiskEngine → OrderEvent → ExecutionEngine → ExecutionReportEvent
+  // 3) Create the MarketDataGateway.
+  // The event_sink lambda captures &engine and calls pushEvent(), which
+  // enqueues the Event variant into the strategy loop's ThreadSafeQueue.
+  // This respects the thread model: the gateway thread never publishes
+  // directly to the EventBus; it only pushes into the queue, and the
+  // strategy loop thread dispatches via the bus.
   // -------------------------------------------------------------------------
-  quant::MarketDataEvent md;
-  md.symbol = "AAPL";
-  md.price = 150.25;
-  md.quantity = 100.0;
-  md.timestamp = std::chrono::system_clock::now();
-  md.sequence_id = 1;
-
-  engine.pushMarketData(md);
-
-  // Give the pipeline time to process across both threads.
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  quant::MarketDataGateway gateway(
+      sim_clock,
+      [&engine](quant::Event event) {
+        engine.pushEvent(std::move(event));
+      });
 
   // -------------------------------------------------------------------------
-  // Shutdown — joins all threads.
+  // 4) Install SIGINT handler so Ctrl-C triggers a clean shutdown.
   // -------------------------------------------------------------------------
+  g_gateway_ptr = &gateway;
+  std::signal(SIGINT, sigint_handler);
+
+  // -------------------------------------------------------------------------
+  // 5) Run the gateway recv loop on the main thread.
+  // This blocks until either:
+  //   a) The Python feeder finishes and no more messages arrive (the loop
+  //      keeps timing out on recv; after several idle cycles with no data
+  //      the operator can Ctrl-C to exit).
+  //   b) The user presses Ctrl-C, which calls gateway.stop() via the
+  //      signal handler, causing run() to return.
+  // -------------------------------------------------------------------------
+  std::cout << "[main] MarketDataGateway listening on tcp://127.0.0.1:5555\n"
+            << "[main] Start the Python feeder in another terminal:\n"
+            << "       python tools/backtest_feeder/feeder.py\n"
+            << "[main] Press Ctrl-C to shut down.\n";
+
+  gateway.run();
+
+  // -------------------------------------------------------------------------
+  // 6) Clean shutdown: stop the engine (destroys components, joins threads).
+  // -------------------------------------------------------------------------
+  std::cout << "[main] Gateway exited. Stopping engine...\n";
   engine.stop();
+
+  g_gateway_ptr = nullptr;
 
   return 0;
 }

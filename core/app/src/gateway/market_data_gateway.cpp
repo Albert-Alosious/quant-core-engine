@@ -46,7 +46,21 @@ void MarketDataGateway::run() {
     // zmq::recv_result_t (std::optional<size_t>). If the timeout expires
     // without a message, the result has no value and we loop back to
     // re-check running_.
-    auto result = socket_.recv(msg, zmq::recv_flags::none);
+    //
+    // EINTR handling: If a POSIX signal (e.g. SIGINT from Ctrl-C) is
+    // delivered while recv() is blocked in a system call, ZMQ throws
+    // zmq::error_t with errno == EINTR. We catch this and treat it the
+    // same as a timeout — loop back and check running_. The signal handler
+    // will have already called stop(), setting running_ to false.
+    zmq::recv_result_t result;
+    try {
+      result = socket_.recv(msg, zmq::recv_flags::none);
+    } catch (const zmq::error_t& e) {
+      if (e.num() == EINTR) {
+        continue;
+      }
+      throw;
+    }
 
     if (!result.has_value()) {
       // Timeout — no message arrived within kRecvTimeoutMs. Loop back and

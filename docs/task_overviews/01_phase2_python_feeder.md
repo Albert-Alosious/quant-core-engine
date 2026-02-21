@@ -72,9 +72,7 @@ Open **two terminal windows** from the project root (`quant-core-engine/`).
 ./build/quant_engine
 ```
 
-The engine starts, spawns strategy and risk/execution threads, and the `MarketDataGateway` begins listening on `tcp://127.0.0.1:5555` (SUB socket).
-
-> **Note:** As of Phase 2, `main.cpp` does not yet wire the `MarketDataGateway` into `TradingEngine`. This trial requires a small modification to `main.cpp` (or a dedicated test binary) that creates a `SimulationTimeProvider`, a `MarketDataGateway`, and runs the gateway on a dedicated thread. This is planned for the next integration step.
+The engine starts in Simulation Mode: creates a `SimulationTimeProvider`, spawns strategy and risk/execution threads, and the `MarketDataGateway` begins listening on `tcp://127.0.0.1:5555` (SUB socket). The main thread blocks in the gateway's recv loop, waiting for ticks from the Python feeder. Press Ctrl-C for a clean shutdown.
 
 **Terminal 2 — Start the Python feeder:**
 

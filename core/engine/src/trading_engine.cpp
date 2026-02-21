@@ -87,6 +87,17 @@ void TradingEngine::pushMarketData(MarketDataEvent event) {
 }
 
 // -----------------------------------------------------------------------------
+// pushEvent(event)
+// -----------------------------------------------------------------------------
+// Accepts the full Event variant and enqueues it on the strategy loop.
+// Used as the event_sink callback by MarketDataGateway. The Event is moved
+// into the queue to avoid unnecessary copies of the variant.
+// -----------------------------------------------------------------------------
+void TradingEngine::pushEvent(Event event) {
+  strategy_loop_.push(std::move(event));
+}
+
+// -----------------------------------------------------------------------------
 // EventBus accessors
 // -----------------------------------------------------------------------------
 EventBus& TradingEngine::strategyEventBus() {

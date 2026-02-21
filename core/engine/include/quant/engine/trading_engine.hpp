@@ -92,6 +92,35 @@ class TradingEngine {
   void pushMarketData(MarketDataEvent event);
 
   // -------------------------------------------------------------------------
+  // pushEvent(event)
+  // -------------------------------------------------------------------------
+  // @brief  Enqueues a generic Event (std::variant) into the strategy loop's
+  //         queue for processing on the strategy thread.
+  //
+  // @param  event  The Event variant to enqueue. Moved into the queue.
+  //
+  // @details
+  // This is the entry point used by MarketDataGateway's event_sink callback.
+  // The gateway constructs a MarketDataEvent, wraps it in the Event variant,
+  // and calls event_sink_(event). TradingEngine binds event_sink to this
+  // method so events flow into the strategy loop without the gateway knowing
+  // about EventLoopThread.
+  //
+  // Why a separate method from pushMarketData():
+  //   pushMarketData() accepts MarketDataEvent directly — convenient for
+  //   tests and manual injection. pushEvent() accepts the full Event variant
+  //   — required by the MarketDataGateway::EventSink signature
+  //   (std::function<void(Event)>). Both ultimately call
+  //   strategy_loop_.push().
+  //
+  // Thread-safety: Safe to call from any thread. Delegates to
+  //                EventLoopThread::push(), which is thread-safe.
+  // Side-effects:  Enqueues the event; the strategy loop thread will
+  //                eventually pop and publish it.
+  // -------------------------------------------------------------------------
+  void pushEvent(Event event);
+
+  // -------------------------------------------------------------------------
   // strategyEventBus() / riskExecutionEventBus()
   // -------------------------------------------------------------------------
   // What: Provide access to the event buses for external subscribers (e.g.
