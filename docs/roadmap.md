@@ -15,7 +15,7 @@
 2. Order State Machine (Transitions: New -> Accepted -> Filled -> Rejected)
 3. Exchange State Reconciliation (Query REST API on startup)
 4. Central OrderId Generator (Thread-safe sequence)
-
+5. 'Risk engine (Risk Hardening).'
 # Phase 4 – External Gateways & Control
 1. Network Layer Threads (`MarketDataThread`, `OrderRoutingThread`)
 2. ZeroMQ (ØMQ) IPC Server (Remote control via Python/Telegram bot)

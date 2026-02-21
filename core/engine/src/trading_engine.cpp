@@ -35,7 +35,8 @@ void TradingEngine::start(IReconciler* reconciler) {
   order_tracker_ =
       std::make_unique<OrderTracker>(risk_execution_loop_.eventBus());
   position_engine_ =
-      std::make_unique<PositionEngine>(risk_execution_loop_.eventBus());
+      std::make_unique<PositionEngine>(risk_execution_loop_.eventBus(),
+                                       risk_limits_);
 
   // ---  2) Synchronization Gate (optional) ----------------------------------
   // If a reconciler is provided, query the exchange for pre-existing state
@@ -88,7 +89,8 @@ void TradingEngine::start(IReconciler* reconciler) {
   strategy_ = std::make_unique<DummyStrategy>(strategy_loop_.eventBus());
   risk_engine_ =
       std::make_unique<RiskEngine>(risk_execution_loop_.eventBus(),
-                                   order_id_gen_);
+                                   order_id_gen_, *position_engine_,
+                                   risk_limits_);
   execution_engine_ =
       std::make_unique<ExecutionEngine>(risk_execution_loop_.eventBus());
 

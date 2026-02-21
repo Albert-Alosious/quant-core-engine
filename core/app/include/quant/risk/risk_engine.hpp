@@ -2,42 +2,55 @@
 
 #include "quant/concurrent/order_id_generator.hpp"
 #include "quant/domain/order.hpp"
+#include "quant/domain/risk_limits.hpp"
 #include "quant/eventbus/event_bus.hpp"
 #include "quant/events/event_types.hpp"
 #include "quant/events/order_event.hpp"
+#include "quant/events/risk_violation_event.hpp"
 
 namespace quant {
+
+class PositionEngine;  // forward declaration — header-only dependency
 
 // -----------------------------------------------------------------------------
 // RiskEngine
 // -----------------------------------------------------------------------------
 //
-// @brief  Converts strategy signals into executable orders.
+// @brief  Converts strategy signals into executable orders after applying
+//         pre-trade risk checks and a post-trade kill switch.
 //
 // @details
-// Listens for SignalEvent on the risk_execution_loop's EventBus, converts
-// them into domain::Order objects, wraps them in OrderEvent, and publishes
-// them back to the same bus.
+// Listens for SignalEvent on the risk_execution_loop's EventBus, applies
+// risk checks, converts passing signals into domain::Order objects, wraps
+// them in OrderEvent, and publishes them back to the same bus.
+//
+// Risk checks:
+//
+//   1. Kill switch (post-trade): RiskEngine subscribes to RiskViolationEvent.
+//      If received, halt_trading_ is set to true and ALL subsequent signals
+//      are silently dropped. This is the last line of defense against
+//      unbounded losses.
+//
+//   2. Max position check (pre-trade): Before creating an order, RiskEngine
+//      queries PositionEngine for the symbol's current net_quantity. If the
+//      new order would push abs(net_quantity) above
+//      limits_.max_position_per_symbol, the signal is dropped.
 //
 // Why in architecture:
-//   Enforces the rule that strategy never calls execution directly.
-//   Serves as the boundary between strategy intent (SignalEvent) and actual
-//   orders sent toward execution.
-//   Lives on the Risk + Execution Thread (risk_execution_loop) so all
-//   risk and order creation logic runs in a single, well-defined thread.
+//   Enforces architecture.md rule #5: "Risk MUST sit between router and
+//   execution." Serves as the boundary between strategy intent (SignalEvent)
+//   and actual orders sent toward execution.
 //
 // Thread model:
-//   RiskEngine is constructed on main() but its callbacks (onSignal) run
-//   on the risk_execution_loop thread, because that loop publishes
-//   SignalEvent via its EventBus.
-//   Order IDs are obtained from an externally-owned OrderIdGenerator
-//   (std::atomic), which is thread-safe even though today only this
-//   thread calls it.
+//   RiskEngine is constructed on main() but its callbacks (onSignal,
+//   onRiskViolation) run on the risk_execution_loop thread, because that
+//   loop publishes events via its EventBus. The PositionEngine reference
+//   is read-only and lives on the same thread — no mutex needed.
 //
 // Ownership:
-//   RiskEngine does not own the EventBus or the OrderIdGenerator; it holds
-//   references to both. The EventBus is owned by EventLoopThread and the
-//   OrderIdGenerator is owned by TradingEngine. Both outlive RiskEngine.
+//   RiskEngine does not own the EventBus, OrderIdGenerator, or
+//   PositionEngine; it holds references to all three. All outlive
+//   RiskEngine (destroyed after it in TradingEngine::stop()).
 // -----------------------------------------------------------------------------
 class RiskEngine {
  public:
@@ -45,26 +58,36 @@ class RiskEngine {
   // Constructor
   // -------------------------------------------------------------------------
   //
-  // @brief  Subscribes to SignalEvent on the provided EventBus.
+  // @brief  Subscribes to SignalEvent and RiskViolationEvent on the provided
+  //         EventBus.
   //
-  // @param  bus     EventBus belonging to risk_execution_loop.
-  // @param  id_gen  Thread-safe ID generator owned by TradingEngine.
+  // @param  bus        EventBus belonging to risk_execution_loop.
+  // @param  id_gen     Thread-safe ID generator owned by TradingEngine.
+  // @param  positions  Read-only reference to PositionEngine for pre-trade
+  //                    position queries. Must live on the same thread.
+  // @param  limits     Engine-wide risk thresholds (copied by value).
   //
   // @details
-  // When a signal arrives, onSignal() will be invoked on the
-  // risk_execution_loop thread. The id_gen reference must remain valid
-  // for the entire lifetime of this RiskEngine instance.
+  // Two subscriptions are registered:
+  //   1. SignalEvent → onSignal(): applies risk checks and creates orders.
+  //   2. RiskViolationEvent → onRiskViolation(): activates the kill switch.
+  //
+  // All references must remain valid for the entire lifetime of this
+  // RiskEngine instance.
   //
   // Thread-safety: Safe to construct from main() before events start
-  // flowing. subscribe() itself is thread-safe.
+  //                flowing. subscribe() itself is thread-safe.
+  // Side-effects:  Registers two callbacks on the EventBus.
   // -------------------------------------------------------------------------
-  RiskEngine(EventBus& bus, OrderIdGenerator& id_gen);
+  RiskEngine(EventBus& bus, OrderIdGenerator& id_gen,
+             const PositionEngine& positions,
+             const domain::RiskLimits& limits);
 
   // -------------------------------------------------------------------------
   // Destructor
   // -------------------------------------------------------------------------
   //
-  // @brief  Unsubscribes from the SignalEvent stream.
+  // @brief  Unsubscribes from both SignalEvent and RiskViolationEvent.
   //
   // @details
   // RAII cleanup; ensures no callbacks run after RiskEngine is destroyed.
@@ -82,24 +105,48 @@ class RiskEngine {
   // onSignal(event)
   // -------------------------------------------------------------------------
   //
-  // @brief  Converts a SignalEvent into a domain::Order with a new OrderId,
-  //         wraps it in OrderEvent, and publishes it.
+  // @brief  Applies risk checks, then converts a passing SignalEvent into a
+  //         domain::Order with a new OrderId and publishes it.
   //
   // @param  event  The incoming signal from a strategy.
   //
   // @details
-  // Encapsulates the mapping from "strategy intent" to "order to be
-  // executed". Keeps order creation logic in the risk layer. The unique
-  // order ID is obtained from the injected OrderIdGenerator.
+  // Pre-trade checks (in order):
+  //   1. If halt_trading_ is true, drop the signal immediately.
+  //   2. Query PositionEngine for the symbol's current net_quantity. If
+  //      abs(current + order_qty) > max_position_per_symbol, drop.
+  //
+  // If all checks pass, build the domain::Order and publish an OrderEvent.
   //
   // Thread model: Runs only on the risk_execution_loop thread.
-  // Side-effects: Publishes an OrderEvent to the EventBus.
+  // Side-effects: May publish an OrderEvent to the EventBus.
   // -------------------------------------------------------------------------
   void onSignal(const SignalEvent& event);
 
+  // -------------------------------------------------------------------------
+  // onRiskViolation(event)
+  // -------------------------------------------------------------------------
+  //
+  // @brief  Activates the kill switch, halting all further order creation.
+  //
+  // @param  event  The RiskViolationEvent from PositionEngine.
+  //
+  // @details
+  // Sets halt_trading_ to true and logs a critical error. Once activated,
+  // the kill switch cannot be reset without restarting the engine.
+  //
+  // Thread model: Runs only on the risk_execution_loop thread.
+  // Side-effects: Sets halt_trading_ = true.
+  // -------------------------------------------------------------------------
+  void onRiskViolation(const RiskViolationEvent& event);
+
   EventBus& bus_;
   OrderIdGenerator& id_gen_;
-  EventBus::SubscriptionId subscription_id_{0};
+  const PositionEngine& positions_;
+  const domain::RiskLimits limits_;
+  bool halt_trading_{false};
+  EventBus::SubscriptionId signal_sub_id_{0};
+  EventBus::SubscriptionId violation_sub_id_{0};
 };
 
 }  // namespace quant

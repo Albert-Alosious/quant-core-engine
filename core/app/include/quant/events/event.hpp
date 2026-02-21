@@ -5,6 +5,7 @@
 #include "order_update_event.hpp"
 #include "execution_report_event.hpp"
 #include "position_update_event.hpp"
+#include "risk_violation_event.hpp"
 #include <variant>
 
 namespace quant {
@@ -34,7 +35,8 @@ using Event = std::variant<
     FillEvent,
     HeartbeatEvent,
     ExecutionReportEvent,
-    PositionUpdateEvent>;
+    PositionUpdateEvent,
+    RiskViolationEvent>;
 
 }  // namespace quant
 

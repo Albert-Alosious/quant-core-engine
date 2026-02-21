@@ -21,10 +21,12 @@
 
 #include "quant/concurrent/event_loop_thread.hpp"
 #include "quant/concurrent/order_id_generator.hpp"
+#include "quant/domain/risk_limits.hpp"
 #include "quant/events/event.hpp"
 #include "quant/events/event_types.hpp"
 #include "quant/events/execution_report_event.hpp"
 #include "quant/execution/execution_engine.hpp"
+#include "quant/risk/position_engine.hpp"
 #include "quant/risk/risk_engine.hpp"
 #include "quant/strategy/dummy_strategy.hpp"
 
@@ -52,10 +54,12 @@
 class PipelineIntegrationTest : public ::testing::Test {
  protected:
   quant::OrderIdGenerator id_gen;
+  quant::domain::RiskLimits risk_limits;
   quant::EventLoopThread strategy_loop;
   quant::EventLoopThread risk_execution_loop;
 
   std::unique_ptr<quant::DummyStrategy> strategy;
+  std::unique_ptr<quant::PositionEngine> position_engine;
   std::unique_ptr<quant::RiskEngine> risk_engine;
   std::unique_ptr<quant::ExecutionEngine> execution_engine;
 
@@ -70,21 +74,23 @@ class PipelineIntegrationTest : public ::testing::Test {
 
     strategy =
         std::make_unique<quant::DummyStrategy>(strategy_loop.eventBus());
+    position_engine =
+        std::make_unique<quant::PositionEngine>(risk_execution_loop.eventBus(),
+                                                risk_limits);
     risk_engine =
         std::make_unique<quant::RiskEngine>(risk_execution_loop.eventBus(),
-                                            id_gen);
+                                            id_gen, *position_engine,
+                                            risk_limits);
     execution_engine =
         std::make_unique<quant::ExecutionEngine>(risk_execution_loop.eventBus());
   }
 
   void TearDown() override {
-    // Destroy components first (they unsubscribe in destructor).
     execution_engine.reset();
     risk_engine.reset();
+    position_engine.reset();
     strategy.reset();
 
-    // Stop loops (joins threads). Safe because no more callbacks reference
-    // component state.
     strategy_loop.stop();
     risk_execution_loop.stop();
   }

@@ -2,6 +2,7 @@
 
 #include "quant/domain/order.hpp"
 #include "quant/domain/position.hpp"
+#include "quant/domain/risk_limits.hpp"
 #include "quant/eventbus/event_bus.hpp"
 #include "quant/events/execution_report_event.hpp"
 #include "quant/events/order_event.hpp"
@@ -69,6 +70,11 @@ namespace quant {
 //   (onOrder, onFill) run on that thread. The internal maps (positions_,
 //   order_cache_) are accessed single-threaded — no mutex needed.
 //
+// Post-trade risk monitoring:
+//   After each fill, if the symbol's realized_pnl drops below
+//   limits_.max_drawdown, a RiskViolationEvent is published. RiskEngine
+//   subscribes to this event and activates its kill switch.
+//
 // Ownership:
 //   Owned by TradingEngine via std::unique_ptr. Holds a reference to the
 //   EventBus owned by risk_execution_loop's EventLoopThread.
@@ -79,22 +85,23 @@ class PositionEngine {
   // Constructor
   // -------------------------------------------------------------------------
   // @brief  Subscribes to OrderEvent and ExecutionReportEvent on the given
-  //         EventBus.
+  //         EventBus, and stores the risk limits for post-trade monitoring.
   //
-  // @param  bus  EventBus belonging to risk_execution_loop.
+  // @param  bus     EventBus belonging to risk_execution_loop.
+  // @param  limits  Engine-wide risk thresholds (copied by value).
   //
   // @details
   // Two subscriptions are registered:
   //   1. OrderEvent → onOrder(): caches {order_id → symbol, side} so
   //      fills can be attributed to a symbol and direction.
-  //   2. ExecutionReportEvent → onFill(): updates positions and publishes
-  //      PositionUpdateEvent.
+  //   2. ExecutionReportEvent → onFill(): updates positions, publishes
+  //      PositionUpdateEvent, and checks drawdown limits.
   //
   // Thread-safety: Safe to construct from main() before events flow.
   //                subscribe() itself is thread-safe.
   // Side-effects:  Registers two callbacks on the EventBus.
   // -------------------------------------------------------------------------
-  explicit PositionEngine(EventBus& bus);
+  PositionEngine(EventBus& bus, const domain::RiskLimits& limits);
 
   // -------------------------------------------------------------------------
   // Destructor
@@ -138,6 +145,31 @@ class PositionEngine {
   // Side-effects: Inserts or overwrites positions_[pos.symbol].
   // -------------------------------------------------------------------------
   void hydratePosition(const domain::Position& pos);
+
+  // -------------------------------------------------------------------------
+  // position(symbol)
+  // -------------------------------------------------------------------------
+  //
+  // @brief  Returns a read-only pointer to the position for the given symbol,
+  //         or nullptr if no position exists.
+  //
+  // @param  symbol  The instrument identifier to look up.
+  //
+  // @return Const pointer to the Position if it exists, nullptr otherwise.
+  //
+  // @details
+  // This accessor is used by RiskEngine for pre-trade position checks. Both
+  // PositionEngine and RiskEngine live on the risk_execution_loop thread, so
+  // this read is single-threaded and safe without a mutex.
+  //
+  // The returned pointer is valid only until the next call to onFill() (which
+  // may insert or modify entries). In practice, RiskEngine::onSignal() uses
+  // it within a single callback invocation — the pointer is never stored.
+  //
+  // Thread model: Safe to call from the risk_execution_loop thread only.
+  // Side-effects: None (read-only).
+  // -------------------------------------------------------------------------
+  const domain::Position* position(const std::string& symbol) const;
 
  private:
   // Lightweight struct cached from OrderEvent. We only need symbol and side
@@ -233,6 +265,8 @@ class PositionEngine {
   EventBus& bus_;
   EventBus::SubscriptionId order_sub_id_{0};
   EventBus::SubscriptionId fill_sub_id_{0};
+
+  const domain::RiskLimits limits_;
 
   // Per-symbol position state. Keyed by symbol string.
   std::unordered_map<std::string, domain::Position> positions_;

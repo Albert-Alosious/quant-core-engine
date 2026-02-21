@@ -1,33 +1,59 @@
 #include "quant/risk/risk_engine.hpp"
+#include "quant/risk/position_engine.hpp"
+
+#include <cmath>
+#include <iostream>
 
 namespace quant {
 
 // -----------------------------------------------------------------------------
-// Constructor: subscribe to SignalEvent
+// Constructor: subscribe to SignalEvent and RiskViolationEvent
 // -----------------------------------------------------------------------------
-RiskEngine::RiskEngine(EventBus& bus, OrderIdGenerator& id_gen)
-    : bus_(bus), id_gen_(id_gen) {
-  subscription_id_ = bus_.subscribe<SignalEvent>(
+RiskEngine::RiskEngine(EventBus& bus, OrderIdGenerator& id_gen,
+                       const PositionEngine& positions,
+                       const domain::RiskLimits& limits)
+    : bus_(bus), id_gen_(id_gen), positions_(positions), limits_(limits) {
+  signal_sub_id_ = bus_.subscribe<SignalEvent>(
       [this](const SignalEvent& e) { onSignal(e); });
+
+  violation_sub_id_ = bus_.subscribe<RiskViolationEvent>(
+      [this](const RiskViolationEvent& e) { onRiskViolation(e); });
 }
 
 // -----------------------------------------------------------------------------
-// Destructor: unsubscribe
+// Destructor: unsubscribe from both streams
 // -----------------------------------------------------------------------------
-RiskEngine::~RiskEngine() { bus_.unsubscribe(subscription_id_); }
+RiskEngine::~RiskEngine() {
+  bus_.unsubscribe(violation_sub_id_);
+  bus_.unsubscribe(signal_sub_id_);
+}
 
 // -----------------------------------------------------------------------------
-// onSignal: build Order and publish OrderEvent
+// onSignal: apply risk checks, then build Order and publish OrderEvent
 // -----------------------------------------------------------------------------
 void RiskEngine::onSignal(const SignalEvent& event) {
+  // --- Kill switch: drawdown violation received, halt all trading -----------
+  if (halt_trading_) {
+    std::cerr << "[RiskEngine] HALTED — dropping signal for "
+              << event.symbol << "\n";
+    return;
+  }
+
+  // --- Pre-trade position check: would this order exceed the limit? ---------
+  const domain::Position* pos = positions_.position(event.symbol);
+  double current_qty = pos ? std::abs(pos->net_quantity) : 0.0;
+  double proposed_qty = current_qty + 1.0;
+  if (proposed_qty > limits_.max_position_per_symbol) {
+    std::cerr << "[RiskEngine] Max position limit ("
+              << limits_.max_position_per_symbol
+              << ") would be exceeded for " << event.symbol
+              << " (current=" << current_qty << "). Dropping signal.\n";
+    return;
+  }
+
+  // --- All checks passed: build and publish the order -----------------------
   domain::OrderId id = id_gen_.next_id();
 
-  // Build the domain Order. Maps signal fields to order fields:
-  // - strategy_id and symbol directly from the signal
-  // - side: SignalEvent::Side -> domain::Side
-  // - quantity: 1.0 (dummy size; a real engine derives from signal.strength)
-  // - price: propagated from the signal's market price so downstream
-  //   execution reports and the PositionEngine have the correct fill price
   domain::Order order;
   order.id = id;
   order.strategy_id = event.strategy_id;
@@ -38,16 +64,24 @@ void RiskEngine::onSignal(const SignalEvent& event) {
   order.quantity = 1.0;
   order.price = event.price;
 
-  // Wrap in OrderEvent so it flows through the EventBus as part of the
-  // Event variant, carrying optional event-level metadata.
   OrderEvent order_event;
   order_event.order = order;
   order_event.timestamp = std::chrono::system_clock::now();
-  order_event.sequence_id = event.sequence_id;  // simple reuse for demo
+  order_event.sequence_id = event.sequence_id;
 
-  // Publish back onto the same bus. ExecutionEngine (also on the
-  // risk_execution_loop) will subscribe to OrderEvent and react.
   bus_.publish(order_event);
+}
+
+// -----------------------------------------------------------------------------
+// onRiskViolation: activate the kill switch
+// -----------------------------------------------------------------------------
+void RiskEngine::onRiskViolation(const RiskViolationEvent& event) {
+  halt_trading_ = true;
+  std::cerr << "[RiskEngine] CRITICAL: " << event.reason
+            << " for " << event.symbol
+            << " (value=" << event.current_value
+            << ", limit=" << event.limit_value
+            << "). ALL TRADING HALTED.\n";
 }
 
 }  // namespace quant

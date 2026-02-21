@@ -2,6 +2,7 @@
 
 #include "quant/concurrent/event_loop_thread.hpp"
 #include "quant/concurrent/order_id_generator.hpp"
+#include "quant/domain/risk_limits.hpp"
 #include "quant/execution/execution_engine.hpp"
 #include "quant/risk/i_reconciler.hpp"
 #include "quant/risk/order_tracker.hpp"
@@ -42,6 +43,7 @@ namespace quant {
 // Ownership:
 //   TradingEngine
 //    ├── order_id_gen_           (OrderIdGenerator — value member, non-movable)
+//    ├── risk_limits_            (RiskLimits — value member, immutable config)
 //    ├── strategy_loop_          (EventLoopThread — value member)
 //    ├── risk_execution_loop_    (EventLoopThread — value member)
 //    ├── strategy_               (unique_ptr<DummyStrategy>)
@@ -178,6 +180,9 @@ class TradingEngine {
  private:
   // --- ID generator (value member — outlives all components) ----------------
   OrderIdGenerator order_id_gen_;
+
+  // --- Risk limits (value member — immutable engine-wide config) ------------
+  domain::RiskLimits risk_limits_;
 
   // --- Event loops (value members — destroyed last in reverse order) --------
   EventLoopThread strategy_loop_;

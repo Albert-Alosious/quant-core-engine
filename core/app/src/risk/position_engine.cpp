@@ -1,5 +1,6 @@
 #include "quant/risk/position_engine.hpp"
 #include "quant/events/position_update_event.hpp"
+#include "quant/events/risk_violation_event.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -9,7 +10,8 @@ namespace quant {
 // -----------------------------------------------------------------------------
 // Constructor: subscribe to OrderEvent and ExecutionReportEvent
 // -----------------------------------------------------------------------------
-PositionEngine::PositionEngine(EventBus& bus) : bus_(bus) {
+PositionEngine::PositionEngine(EventBus& bus, const domain::RiskLimits& limits)
+    : bus_(bus), limits_(limits) {
   // Subscribe to OrderEvent to cache {order_id → symbol, side} before the
   // corresponding fill arrives. Must be registered before the
   // ExecutionReportEvent subscription so the cache is populated first when
@@ -26,6 +28,15 @@ PositionEngine::PositionEngine(EventBus& bus) : bus_(bus) {
 // -----------------------------------------------------------------------------
 void PositionEngine::hydratePosition(const domain::Position& pos) {
   positions_[pos.symbol] = pos;
+}
+
+// -----------------------------------------------------------------------------
+// position: read-only accessor for pre-trade checks by RiskEngine
+// -----------------------------------------------------------------------------
+const domain::Position* PositionEngine::position(
+    const std::string& symbol) const {
+  auto it = positions_.find(symbol);
+  return (it != positions_.end()) ? &it->second : nullptr;
 }
 
 // -----------------------------------------------------------------------------
@@ -90,6 +101,20 @@ void PositionEngine::onFill(const ExecutionReportEvent& event) {
   update.sequence_id = event.sequence_id;
 
   bus_.publish(update);
+
+  // Post-trade drawdown check: if realized PnL breaches the floor, publish
+  // a RiskViolationEvent so RiskEngine can activate the kill switch.
+  if (pos.realized_pnl < limits_.max_drawdown) {
+    RiskViolationEvent violation;
+    violation.symbol = info.symbol;
+    violation.reason = "Max Drawdown Exceeded";
+    violation.current_value = pos.realized_pnl;
+    violation.limit_value = limits_.max_drawdown;
+    violation.timestamp = event.timestamp;
+    violation.sequence_id = event.sequence_id;
+
+    bus_.publish(violation);
+  }
 
   // Remove the order from the cache. In the current model each order
   // produces exactly one fill, so the entry is no longer needed.
