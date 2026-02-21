@@ -1,6 +1,7 @@
 #pragma once
 
 #include "quant/concurrent/event_loop_thread.hpp"
+#include "quant/concurrent/order_id_generator.hpp"
 #include "quant/execution/execution_engine.hpp"
 #include "quant/risk/order_tracker.hpp"
 #include "quant/risk/position_engine.hpp"
@@ -14,38 +15,45 @@ namespace quant {
 // -----------------------------------------------------------------------------
 // TradingEngine
 // -----------------------------------------------------------------------------
-// Responsibility: Central orchestrator that owns all threads, event loops,
-// and engine components. Provides a clean lifecycle API (start/stop) so that
-// main() and tests can use the engine without manually wiring internals.
+//
+// @brief  Central orchestrator that owns all threads, event loops, and engine
+//         components.
+//
+// @details
+// Provides a clean lifecycle API (start/stop) so that main() and tests can
+// use the engine without manually wiring internals.
 //
 // Why in architecture (architecture.md):
-// - "Single executable binary" — TradingEngine is the programmatic root.
-// - "No global mutable state" — engine owns everything by value or unique_ptr.
-// - "Modular architecture" — components are created and destroyed through the
+//   "Single executable binary" — TradingEngine is the programmatic root.
+//   "No global mutable state" — engine owns everything by value or unique_ptr.
+//   "Modular architecture" — components are created and destroyed through the
 //   engine; adding new strategies or risk modules means extending the engine,
 //   not editing main().
 //
 // Thread model:
-// - TradingEngine is constructed and destroyed on the caller's thread (main).
-// - start() spawns worker threads inside the EventLoopThreads.
-// - stop() joins those threads. After stop(), no worker threads are running.
-// - Between start() and stop(), the caller may push events via pushMarketData()
+//   TradingEngine is constructed and destroyed on the caller's thread (main).
+//   start() spawns worker threads inside the EventLoopThreads.
+//   stop() joins those threads. After stop(), no worker threads are running.
+//   Between start() and stop(), the caller may push events via pushMarketData()
 //   from any thread. EventBus accessors allow external subscribers (e.g. for
 //   logging or monitoring) — subscribe before or after start().
 //
 // Ownership:
 //   TradingEngine
-//    ├── strategy_loop_         (EventLoopThread — value member)
-//    ├── risk_execution_loop_   (EventLoopThread — value member)
-//    ├── strategy_              (unique_ptr<DummyStrategy>)
-//    ├── order_tracker_         (unique_ptr<OrderTracker>)
-//    ├── position_engine_       (unique_ptr<PositionEngine>)
-//    ├── risk_engine_           (unique_ptr<RiskEngine>)
-//    └── execution_engine_      (unique_ptr<ExecutionEngine>)
+//    ├── order_id_gen_           (OrderIdGenerator — value member, non-movable)
+//    ├── strategy_loop_          (EventLoopThread — value member)
+//    ├── risk_execution_loop_    (EventLoopThread — value member)
+//    ├── strategy_               (unique_ptr<DummyStrategy>)
+//    ├── order_tracker_          (unique_ptr<OrderTracker>)
+//    ├── position_engine_        (unique_ptr<PositionEngine>)
+//    ├── risk_engine_            (unique_ptr<RiskEngine>)
+//    └── execution_engine_       (unique_ptr<ExecutionEngine>)
 //
 // Components are heap-allocated (unique_ptr) so we can control destruction
 // order: components must be destroyed before the loops they reference.
 // EventLoopThreads are value members destroyed last (reverse member order).
+// The OrderIdGenerator is a value member that outlives all components — it
+// is referenced by RiskEngine (and any future order-creating components).
 // -----------------------------------------------------------------------------
 class TradingEngine {
  public:
@@ -139,6 +147,9 @@ class TradingEngine {
   EventBus& riskExecutionEventBus();
 
  private:
+  // --- ID generator (value member — outlives all components) ----------------
+  OrderIdGenerator order_id_gen_;
+
   // --- Event loops (value members — destroyed last in reverse order) --------
   EventLoopThread strategy_loop_;
   EventLoopThread risk_execution_loop_;
@@ -150,7 +161,6 @@ class TradingEngine {
   std::unique_ptr<RiskEngine> risk_engine_;
   std::unique_ptr<ExecutionEngine> execution_engine_;
 
-  // Tracks whether start() has been called (and stop() has not).
   bool running_{false};
 };
 

@@ -105,7 +105,7 @@ void OrderTracker::onExecutionReport(const ExecutionReportEvent& event) {
   domain::OrderStatus previous = order.status;
 
   // Map wire-level ExecutionStatus to internal OrderStatus.
-  domain::OrderStatus proposed;
+  domain::OrderStatus proposed = domain::OrderStatus::New;
   switch (event.status) {
     case ExecutionStatus::Accepted:
       proposed = domain::OrderStatus::Accepted;
@@ -116,6 +116,11 @@ void OrderTracker::onExecutionReport(const ExecutionReportEvent& event) {
     case ExecutionStatus::Rejected:
       proposed = domain::OrderStatus::Rejected;
       break;
+    default:
+      std::cerr << "[OrderTracker] WARNING: unknown ExecutionStatus="
+                << static_cast<int>(event.status)
+                << " for order_id=" << event.order_id << ". Skipping.\n";
+      return;
   }
 
   if (!transitionStatus(previous, proposed)) {

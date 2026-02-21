@@ -20,6 +20,7 @@
 // =============================================================================
 
 #include "quant/concurrent/event_loop_thread.hpp"
+#include "quant/concurrent/order_id_generator.hpp"
 #include "quant/events/event.hpp"
 #include "quant/events/event_types.hpp"
 #include "quant/events/execution_report_event.hpp"
@@ -50,10 +51,10 @@
 // =============================================================================
 class PipelineIntegrationTest : public ::testing::Test {
  protected:
+  quant::OrderIdGenerator id_gen;
   quant::EventLoopThread strategy_loop;
   quant::EventLoopThread risk_execution_loop;
 
-  // Components are heap-allocated so we can destroy them before the loops.
   std::unique_ptr<quant::DummyStrategy> strategy;
   std::unique_ptr<quant::RiskEngine> risk_engine;
   std::unique_ptr<quant::ExecutionEngine> execution_engine;
@@ -62,20 +63,16 @@ class PipelineIntegrationTest : public ::testing::Test {
     strategy_loop.start();
     risk_execution_loop.start();
 
-    // -- Forwarder: SignalEvent crosses from strategy_loop → risk_execution_loop.
-    // This is the critical cross-thread bridge. DummyStrategy publishes
-    // SignalEvent on strategy_loop's bus; this subscriber pushes it into the
-    // risk_execution_loop's queue, which will publish it on the risk bus.
     strategy_loop.eventBus().subscribe<quant::SignalEvent>(
         [this](const quant::SignalEvent& e) {
           risk_execution_loop.push(e);
         });
 
-    // -- Components: same wiring as main().
     strategy =
         std::make_unique<quant::DummyStrategy>(strategy_loop.eventBus());
     risk_engine =
-        std::make_unique<quant::RiskEngine>(risk_execution_loop.eventBus());
+        std::make_unique<quant::RiskEngine>(risk_execution_loop.eventBus(),
+                                            id_gen);
     execution_engine =
         std::make_unique<quant::ExecutionEngine>(risk_execution_loop.eventBus());
   }

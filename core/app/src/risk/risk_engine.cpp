@@ -5,9 +5,8 @@ namespace quant {
 // -----------------------------------------------------------------------------
 // Constructor: subscribe to SignalEvent
 // -----------------------------------------------------------------------------
-RiskEngine::RiskEngine(EventBus& bus) : bus_(bus) {
-  // Subscribe to SignalEvent. The callback runs on the
-  // risk_execution_loop thread whenever that loop publishes a SignalEvent.
+RiskEngine::RiskEngine(EventBus& bus, OrderIdGenerator& id_gen)
+    : bus_(bus), id_gen_(id_gen) {
   subscription_id_ = bus_.subscribe<SignalEvent>(
       [this](const SignalEvent& e) { onSignal(e); });
 }
@@ -21,9 +20,7 @@ RiskEngine::~RiskEngine() { bus_.unsubscribe(subscription_id_); }
 // onSignal: build Order and publish OrderEvent
 // -----------------------------------------------------------------------------
 void RiskEngine::onSignal(const SignalEvent& event) {
-  // Generate a new unique order id. This is safe without atomics because all
-  // callbacks run on the risk_execution_loop thread—no concurrent writers.
-  domain::OrderId id = next_order_id_++;
+  domain::OrderId id = id_gen_.next_id();
 
   // Build the domain Order. Maps signal fields to order fields:
   // - strategy_id and symbol directly from the signal

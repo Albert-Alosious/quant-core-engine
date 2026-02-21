@@ -62,7 +62,8 @@ void TradingEngine::start() {
   position_engine_ =
       std::make_unique<PositionEngine>(risk_execution_loop_.eventBus());
   risk_engine_ =
-      std::make_unique<RiskEngine>(risk_execution_loop_.eventBus());
+      std::make_unique<RiskEngine>(risk_execution_loop_.eventBus(),
+                                   order_id_gen_);
   execution_engine_ =
       std::make_unique<ExecutionEngine>(risk_execution_loop_.eventBus());
 

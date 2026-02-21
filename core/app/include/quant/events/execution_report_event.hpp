@@ -34,23 +34,30 @@ enum class ExecutionStatus {
 // -----------------------------------------------------------------------------
 // ExecutionReportEvent
 // -----------------------------------------------------------------------------
-// Responsibility: Immutable description of what happened to a specific order
-// at the execution layer (filled or rejected).
-// Why separate from Order:
-// - Orders describe *intent*; execution reports describe *outcome*.
-// - There may be multiple reports over an order's lifetime in a real engine;
-//   here we keep it simple (single report) but the separation holds.
+//
+// @brief  Immutable description of what happened to a specific order at the
+//         execution layer.
+//
+// @details
+// Orders describe *intent*; execution reports describe *outcome*. There may
+// be multiple reports over an order's lifetime (e.g. Accepted then Filled).
+//
+// The default status is Accepted (ordinal 0), matching the natural
+// zero-initialization of the enum and the first step in the order lifecycle.
+// All execution engine implementations must explicitly set the status field
+// for every report they publish.
+//
 // Thread model:
-// - Created and published on the risk_execution_loop (ExecutionEngine).
-// - Consumed by any subscribers on that loop (e.g. logging, position manager
-//   in the future). Safe to copy between threads via Event since it is plain
+//   Created and published on the risk_execution_loop (ExecutionEngine).
+//   Consumed by OrderTracker, PositionEngine, and logging subscribers on
+//   that loop. Safe to copy between threads via Event since it is plain
 //   data with value semantics.
 // -----------------------------------------------------------------------------
 struct ExecutionReportEvent {
   domain::OrderId order_id{};  // Which order this report refers to
-  double filled_quantity{0.0}; // How much was filled (full quantity here)
-  double fill_price{0.0};      // Price at which it was filled
-  ExecutionStatus status{ExecutionStatus::Filled};
+  double filled_quantity{0.0}; // How much was filled (0 for Accepted reports)
+  double fill_price{0.0};      // Price at which it was filled (0 for Accepted)
+  ExecutionStatus status{ExecutionStatus::Accepted};
 
   // Optional event-level metadata following the same pattern as other
   // events. Timestamp helps correlate fills with market data.
