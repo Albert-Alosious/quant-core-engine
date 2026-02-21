@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_subdirectory(core)
 
 add_executable(quant_engine main.cpp)
-target_link_libraries(quant_engine core_lib)
+target_link_libraries(quant_engine engine_lib)
 
 # -----------------------------------------------------------------------------
 # Google Test (fetched at configure time — no system install needed)

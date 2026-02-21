@@ -1,4 +1,4 @@
-# Quant Core Engine — Project Analysis & Architecture
+–––# Quant Core Engine — Project Analysis & Architecture
 
 ## Implementation Status
 

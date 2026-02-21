@@ -1,6 +1,6 @@
 # -----------------------------------------------------------------------------
 # Test targets — one executable per test suite for isolation.
-# Each links against core_lib (the engine library) and GTest::gtest_main
+# Each links against core_lib (or engine_lib) and GTest::gtest_main
 # (provides int main() with GoogleTest runner so test files are pure tests).
 # gtest_discover_tests() auto-registers individual TEST() cases with ctest.
 # -----------------------------------------------------------------------------
@@ -21,3 +21,8 @@ gtest_discover_tests(event_bus_test)
 add_executable(pipeline_integration_test pipeline_integration_test.cpp)
 target_link_libraries(pipeline_integration_test core_lib GTest::gtest_main)
 gtest_discover_tests(pipeline_integration_test)
+
+# --- TradingEngine tests -----------------------------------------------------
+add_executable(trading_engine_test trading_engine_test.cpp)
+target_link_libraries(trading_engine_test engine_lib GTest::gtest_main)
+gtest_discover_tests(trading_engine_test)
