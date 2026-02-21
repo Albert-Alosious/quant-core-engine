@@ -27,6 +27,7 @@ PositionEngine::PositionEngine(EventBus& bus, const domain::RiskLimits& limits)
 // hydratePosition: inject pre-existing position from exchange reconciliation
 // -----------------------------------------------------------------------------
 void PositionEngine::hydratePosition(const domain::Position& pos) {
+  std::unique_lock lock(positions_mutex_);
   positions_[pos.symbol] = pos;
 }
 
@@ -35,8 +36,22 @@ void PositionEngine::hydratePosition(const domain::Position& pos) {
 // -----------------------------------------------------------------------------
 const domain::Position* PositionEngine::position(
     const std::string& symbol) const {
+  std::shared_lock lock(positions_mutex_);
   auto it = positions_.find(symbol);
   return (it != positions_.end()) ? &it->second : nullptr;
+}
+
+// -----------------------------------------------------------------------------
+// getSnapshots: thread-safe copy of all positions for IPC server
+// -----------------------------------------------------------------------------
+std::vector<domain::Position> PositionEngine::getSnapshots() const {
+  std::shared_lock lock(positions_mutex_);
+  std::vector<domain::Position> result;
+  result.reserve(positions_.size());
+  for (const auto& [symbol, pos] : positions_) {
+    result.push_back(pos);
+  }
+  return result;
 }
 
 // -----------------------------------------------------------------------------
@@ -82,37 +97,41 @@ void PositionEngine::onFill(const ExecutionReportEvent& event) {
                                ? event.filled_quantity
                                : -event.filled_quantity;
 
-  // Get or create the position for this symbol. operator[] default-constructs
-  // a Position with net_quantity=0, average_price=0, realized_pnl=0 if the
-  // symbol is new — which is correct for a flat starting position.
-  domain::Position& pos = positions_[info.symbol];
-  if (pos.symbol.empty()) {
-    pos.symbol = info.symbol;
-  }
-
-  // Apply the fill to the position using strict PnL math.
-  applyFill(pos, signed_fill_qty, event.fill_price);
-
-  // Publish a snapshot of the updated position. The Position is copied
-  // by value into the event — safe and immutable.
+  // Scope the positions_mutex_ lock to cover only the mutation and the
+  // snapshot copy. EventBus::publish() is called outside the lock to avoid
+  // holding it during subscriber dispatch.
   PositionUpdateEvent update;
-  update.position = pos;
-  update.timestamp = event.timestamp;
-  update.sequence_id = event.sequence_id;
+  bool drawdown_breached = false;
+  RiskViolationEvent violation;
+
+  {
+    std::unique_lock lock(positions_mutex_);
+
+    domain::Position& pos = positions_[info.symbol];
+    if (pos.symbol.empty()) {
+      pos.symbol = info.symbol;
+    }
+
+    applyFill(pos, signed_fill_qty, event.fill_price);
+
+    update.position = pos;
+    update.timestamp = event.timestamp;
+    update.sequence_id = event.sequence_id;
+
+    if (pos.realized_pnl < limits_.max_drawdown) {
+      drawdown_breached = true;
+      violation.symbol = info.symbol;
+      violation.reason = "Max Drawdown Exceeded";
+      violation.current_value = pos.realized_pnl;
+      violation.limit_value = limits_.max_drawdown;
+      violation.timestamp = event.timestamp;
+      violation.sequence_id = event.sequence_id;
+    }
+  }
 
   bus_.publish(update);
 
-  // Post-trade drawdown check: if realized PnL breaches the floor, publish
-  // a RiskViolationEvent so RiskEngine can activate the kill switch.
-  if (pos.realized_pnl < limits_.max_drawdown) {
-    RiskViolationEvent violation;
-    violation.symbol = info.symbol;
-    violation.reason = "Max Drawdown Exceeded";
-    violation.current_value = pos.realized_pnl;
-    violation.limit_value = limits_.max_drawdown;
-    violation.timestamp = event.timestamp;
-    violation.sequence_id = event.sequence_id;
-
+  if (drawdown_breached) {
     bus_.publish(violation);
   }
 

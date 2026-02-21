@@ -2,6 +2,7 @@
 
 #include "quant/domain/order.hpp"
 #include "quant/eventbus/event_bus.hpp"
+#include "quant/execution/i_execution_engine.hpp"
 #include "quant/events/order_event.hpp"
 #include "quant/events/execution_report_event.hpp"
 
@@ -10,8 +11,8 @@ namespace quant {
 // -----------------------------------------------------------------------------
 // ExecutionEngine
 // -----------------------------------------------------------------------------
-// Responsibility: Listens for OrderEvent on the risk_execution_loop's
-// EventBus, simulates an immediate fill, and publishes an ExecutionReportEvent.
+// Responsibility: Listens for OrderEvent on its thread's EventBus, simulates
+// an immediate fill, and publishes an ExecutionReportEvent.
 //
 // Why in architecture:
 // - Separates risk (order creation and approval) from execution (sending
@@ -20,12 +21,13 @@ namespace quant {
 //   without touching strategy or risk.
 //
 // Thread model:
-// - Lives on the Risk + Execution Thread (risk_execution_loop).
+// - Lives on the OrderRoutingThread's EventLoopThread (Phase 4+).
 // - All callbacks run on that thread; no internal locking is needed.
 // Ownership:
-// - Holds a reference to the EventBus owned by EventLoopThread.
+// - Holds a reference to the EventBus owned by the OrderRoutingThread's
+//   internal EventLoopThread.
 // -----------------------------------------------------------------------------
-class ExecutionEngine {
+class ExecutionEngine final : public IExecutionEngine {
  public:
   // -------------------------------------------------------------------------
   // Constructor
@@ -48,7 +50,7 @@ class ExecutionEngine {
   // Why: RAII cleanup; prevents callbacks running after destruction.
   // Thread-safety: Safe to destroy from main() after the loop is stopped.
   // -------------------------------------------------------------------------
-  ~ExecutionEngine();
+  ~ExecutionEngine() override;
 
   ExecutionEngine(const ExecutionEngine&) = delete;
   ExecutionEngine& operator=(const ExecutionEngine&) = delete;

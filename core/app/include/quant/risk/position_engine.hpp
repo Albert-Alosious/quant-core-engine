@@ -7,8 +7,10 @@
 #include "quant/events/execution_report_event.hpp"
 #include "quant/events/order_event.hpp"
 
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace quant {
 
@@ -171,6 +173,27 @@ class PositionEngine {
   // -------------------------------------------------------------------------
   const domain::Position* position(const std::string& symbol) const;
 
+  // -------------------------------------------------------------------------
+  // getSnapshots()
+  // -------------------------------------------------------------------------
+  //
+  // @brief  Returns a copy of all current positions as a vector.
+  //
+  // @return A vector of Position structs, one per tracked symbol. The
+  //         vector is a deep copy — safe to use from any thread after
+  //         the call returns.
+  //
+  // @details
+  // This method is designed for cross-thread access by the IPC server.
+  // It acquires a shared_lock on positions_mutex_ so it can run
+  // concurrently with other readers (e.g., position()) but waits for
+  // any active writer (onFill(), hydratePosition()) to finish.
+  //
+  // Thread model: Safe to call from any thread.
+  // Side-effects: None (read-only).
+  // -------------------------------------------------------------------------
+  std::vector<domain::Position> getSnapshots() const;
+
  private:
   // Lightweight struct cached from OrderEvent. We only need symbol and side
   // to process the fill; storing the full domain::Order would be wasteful.
@@ -267,6 +290,11 @@ class PositionEngine {
   EventBus::SubscriptionId fill_sub_id_{0};
 
   const domain::RiskLimits limits_;
+
+  // Protects positions_ for cross-thread reads (IPC server's getSnapshots()
+  // and position() from the risk loop). Writers (onFill, hydratePosition)
+  // acquire unique_lock; readers acquire shared_lock.
+  mutable std::shared_mutex positions_mutex_;
 
   // Per-symbol position state. Keyed by symbol string.
   std::unordered_map<std::string, domain::Position> positions_;

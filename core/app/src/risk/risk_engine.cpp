@@ -33,7 +33,7 @@ RiskEngine::~RiskEngine() {
 // -----------------------------------------------------------------------------
 void RiskEngine::onSignal(const SignalEvent& event) {
   // --- Kill switch: drawdown violation received, halt all trading -----------
-  if (halt_trading_) {
+  if (halt_trading_.load(std::memory_order_relaxed)) {
     std::cerr << "[RiskEngine] HALTED — dropping signal for "
               << event.symbol << "\n";
     return;
@@ -76,12 +76,27 @@ void RiskEngine::onSignal(const SignalEvent& event) {
 // onRiskViolation: activate the kill switch
 // -----------------------------------------------------------------------------
 void RiskEngine::onRiskViolation(const RiskViolationEvent& event) {
-  halt_trading_ = true;
+  halt_trading_.store(true);
   std::cerr << "[RiskEngine] CRITICAL: " << event.reason
             << " for " << event.symbol
             << " (value=" << event.current_value
             << ", limit=" << event.limit_value
             << "). ALL TRADING HALTED.\n";
+}
+
+// -----------------------------------------------------------------------------
+// haltTrading: external kill switch activation (IPC command)
+// -----------------------------------------------------------------------------
+void RiskEngine::haltTrading() {
+  halt_trading_.store(true);
+  std::cerr << "[RiskEngine] HALT command received. ALL TRADING HALTED.\n";
+}
+
+// -----------------------------------------------------------------------------
+// isHalted: thread-safe read of the kill switch state
+// -----------------------------------------------------------------------------
+bool RiskEngine::isHalted() const {
+  return halt_trading_.load(std::memory_order_relaxed);
 }
 
 }  // namespace quant

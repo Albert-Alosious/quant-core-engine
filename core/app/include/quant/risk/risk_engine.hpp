@@ -8,6 +8,8 @@
 #include "quant/events/order_event.hpp"
 #include "quant/events/risk_violation_event.hpp"
 
+#include <atomic>
+
 namespace quant {
 
 class PositionEngine;  // forward declaration — header-only dependency
@@ -100,6 +102,41 @@ class RiskEngine {
   RiskEngine(RiskEngine&&) = delete;
   RiskEngine& operator=(RiskEngine&&) = delete;
 
+  // -------------------------------------------------------------------------
+  // haltTrading()
+  // -------------------------------------------------------------------------
+  //
+  // @brief  Activates the kill switch from an external thread (e.g., the
+  //         IPC server thread via a HALT command).
+  //
+  // @details
+  // Sets halt_trading_ to true. All subsequent signals are dropped.
+  // This is the programmatic equivalent of receiving a RiskViolationEvent,
+  // but triggered externally by an operator rather than by a drawdown
+  // breach.
+  //
+  // Thread-safety: Safe to call from any thread (atomic store).
+  // Side-effects:  All future onSignal() calls will drop signals.
+  // -------------------------------------------------------------------------
+  void haltTrading();
+
+  // -------------------------------------------------------------------------
+  // isHalted()
+  // -------------------------------------------------------------------------
+  //
+  // @brief  Returns whether the kill switch is currently active.
+  //
+  // @return true if trading is halted, false otherwise.
+  //
+  // @details
+  // Used by TradingEngine::executeCommand() to report engine status to
+  // the IPC server.
+  //
+  // Thread-safety: Safe to call from any thread (atomic load).
+  // Side-effects:  None (read-only).
+  // -------------------------------------------------------------------------
+  bool isHalted() const;
+
  private:
   // -------------------------------------------------------------------------
   // onSignal(event)
@@ -144,7 +181,7 @@ class RiskEngine {
   OrderIdGenerator& id_gen_;
   const PositionEngine& positions_;
   const domain::RiskLimits limits_;
-  bool halt_trading_{false};
+  std::atomic<bool> halt_trading_{false};
   EventBus::SubscriptionId signal_sub_id_{0};
   EventBus::SubscriptionId violation_sub_id_{0};
 };

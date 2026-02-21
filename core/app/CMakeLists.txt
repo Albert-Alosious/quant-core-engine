@@ -10,6 +10,9 @@ add_library(core_lib
   src/time/live_time_provider.cpp
   src/time/simulation_time_provider.cpp
   src/gateway/market_data_gateway.cpp
+  src/network/market_data_thread.cpp
+  src/network/order_routing_thread.cpp
+  src/network/ipc_server.cpp
 )
 target_include_directories(core_lib PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
