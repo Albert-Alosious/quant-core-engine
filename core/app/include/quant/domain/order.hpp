@@ -1,5 +1,7 @@
 #pragma once
 
+#include "quant/domain/order_status.hpp"
+
 #include <cstdint>
 #include <string>
 
@@ -38,17 +40,27 @@ enum class Side {
 // -----------------------------------------------------------------------------
 // Order
 // -----------------------------------------------------------------------------
-// Responsibility: Immutable description of an order intent: which strategy,
-// which symbol, which side, how much, and at what price.
+// Responsibility: Describes an order's full state: the original intent (symbol,
+// side, quantity, price) plus its current lifecycle status and cumulative fill.
+//
+// @details
+// When first created by RiskEngine, status is New and filled_quantity is 0.
+// The OrderTracker mutates its internal copy as execution reports arrive,
+// advancing the status through the state machine and accumulating fills.
+// Copies distributed via OrderEvent and OrderUpdateEvent are snapshots —
+// recipients must not mutate them.
+//
 // Why a simple POD-like struct:
 // - Plain data holder with no behavior keeps the domain model easy to reason
 //   about, especially for a C background.
 // - Value semantics: safe to copy between threads and store in events.
 // - No internal locking: thread-safety is achieved by treating Order as
-//   immutable once constructed and only passing it across threads via events.
+//   immutable once copied into an event. Only the authoritative copy inside
+//   the OrderTracker is mutated, and only on the risk_execution_loop thread.
+//
 // Ownership:
-// - Orders are created and owned logically by the RiskEngine and then copied
-//   into events. No shared mutable Order objects across threads.
+// - Orders are created by RiskEngine, tracked by OrderTracker, and
+//   distributed as read-only snapshots via events.
 // -----------------------------------------------------------------------------
 struct Order {
   OrderId id{};                 // Unique identifier for this order
@@ -57,6 +69,8 @@ struct Order {
   Side side{Side::Buy};         // Buy or Sell
   double quantity{0.0};         // Order size (units or contracts)
   double price{0.0};            // Limit price or last known price for testing
+  OrderStatus status{OrderStatus::New};  // Current lifecycle state
+  double filled_quantity{0.0};  // Cumulative filled quantity (partial fills)
 };
 
 }  // namespace domain

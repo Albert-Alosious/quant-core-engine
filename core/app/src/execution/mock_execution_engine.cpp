@@ -24,34 +24,37 @@ MockExecutionEngine::~MockExecutionEngine() {
 }
 
 // -----------------------------------------------------------------------------
-// onOrder: simulate perfect fill and publish ExecutionReportEvent
+// onOrder: simulate realistic two-step execution (Accepted → Filled)
 // -----------------------------------------------------------------------------
 void MockExecutionEngine::onOrder(const OrderEvent& event) {
   const domain::Order& order = event.order;
+  auto ts = ms_to_timestamp(time_provider_.now_ms());
 
-  // Build the execution report. In backtesting we simulate a perfect fill:
-  // the entire order quantity is filled at exactly the order price, with no
-  // slippage or partial fills. This keeps the simulation simple and
-  // reproducible for Phase 2.
-  ExecutionReportEvent report;
-  report.order_id = order.id;
-  report.filled_quantity = order.quantity;
-  report.fill_price = order.price;
-  report.status = ExecutionStatus::Filled;
+  // --- Report 1: Accepted ---------------------------------------------------
+  // The execution layer acknowledges the order before filling it. This
+  // allows the OrderTracker to advance the order from New → Accepted.
+  ExecutionReportEvent ack;
+  ack.order_id = order.id;
+  ack.filled_quantity = 0.0;
+  ack.fill_price = 0.0;
+  ack.status = ExecutionStatus::Accepted;
+  ack.timestamp = ts;
+  ack.sequence_id = event.sequence_id;
 
-  // Use the injected time provider instead of std::chrono::system_clock::now().
-  // In backtesting, time_provider_ is a SimulationTimeProvider whose clock
-  // tracks the historical data. ms_to_timestamp() converts the int64_t
-  // milliseconds back to the Timestamp (chrono time_point) that
-  // ExecutionReportEvent expects.
-  report.timestamp = ms_to_timestamp(time_provider_.now_ms());
+  bus_.publish(ack);
 
-  // Reuse the sequence_id from the incoming OrderEvent for traceability.
-  report.sequence_id = event.sequence_id;
+  // --- Report 2: Filled -----------------------------------------------------
+  // Perfect fill at the order price with zero slippage. The OrderTracker
+  // advances Accepted → Filled, and PositionEngine processes the fill.
+  ExecutionReportEvent fill;
+  fill.order_id = order.id;
+  fill.filled_quantity = order.quantity;
+  fill.fill_price = order.price;
+  fill.status = ExecutionStatus::Filled;
+  fill.timestamp = ts;
+  fill.sequence_id = event.sequence_id;
 
-  // Publish the fill report back onto the same bus. Downstream subscribers
-  // (logging, future PositionEngine) will receive it on this thread.
-  bus_.publish(report);
+  bus_.publish(fill);
 }
 
 }  // namespace quant

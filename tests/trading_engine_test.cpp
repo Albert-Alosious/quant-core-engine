@@ -49,7 +49,9 @@ TEST(TradingEngineTest, FullPipelineEndToEnd) {
 
   engine.riskExecutionEventBus().subscribe<quant::ExecutionReportEvent>(
       [&promise](const quant::ExecutionReportEvent& e) {
-        promise.set_value(e);
+        if (e.status == quant::ExecutionStatus::Filled) {
+          promise.set_value(e);
+        }
       });
 
   engine.start();
@@ -121,9 +123,11 @@ TEST(TradingEngineTest, MultipleEvents) {
   std::condition_variable cv;
 
   engine.riskExecutionEventBus().subscribe<quant::ExecutionReportEvent>(
-      [&report_count, &cv](const quant::ExecutionReportEvent&) {
-        report_count.fetch_add(1);
-        cv.notify_all();
+      [&report_count, &cv](const quant::ExecutionReportEvent& e) {
+        if (e.status == quant::ExecutionStatus::Filled) {
+          report_count.fetch_add(1);
+          cv.notify_all();
+        }
       });
 
   engine.start();

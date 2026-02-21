@@ -2,6 +2,7 @@
 
 #include "event_types.hpp"
 #include "order_event.hpp"
+#include "order_update_event.hpp"
 #include "execution_report_event.hpp"
 #include "position_update_event.hpp"
 #include <variant>
@@ -28,6 +29,7 @@ using Event = std::variant<
     MarketDataEvent,
     SignalEvent,
     OrderEvent,
+    OrderUpdateEvent,
     RiskRejectEvent,
     FillEvent,
     HeartbeatEvent,

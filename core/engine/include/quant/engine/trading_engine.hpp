@@ -2,6 +2,7 @@
 
 #include "quant/concurrent/event_loop_thread.hpp"
 #include "quant/execution/execution_engine.hpp"
+#include "quant/risk/order_tracker.hpp"
 #include "quant/risk/position_engine.hpp"
 #include "quant/risk/risk_engine.hpp"
 #include "quant/strategy/dummy_strategy.hpp"
@@ -37,9 +38,10 @@ namespace quant {
 //    ├── strategy_loop_         (EventLoopThread — value member)
 //    ├── risk_execution_loop_   (EventLoopThread — value member)
 //    ├── strategy_              (unique_ptr<DummyStrategy>)
+//    ├── order_tracker_         (unique_ptr<OrderTracker>)
+//    ├── position_engine_       (unique_ptr<PositionEngine>)
 //    ├── risk_engine_           (unique_ptr<RiskEngine>)
-//    ├── execution_engine_      (unique_ptr<ExecutionEngine>)
-//    └── position_engine_       (unique_ptr<PositionEngine>)
+//    └── execution_engine_      (unique_ptr<ExecutionEngine>)
 //
 // Components are heap-allocated (unique_ptr) so we can control destruction
 // order: components must be destroyed before the loops they reference.
@@ -143,9 +145,10 @@ class TradingEngine {
 
   // --- Components (heap-allocated for controlled destruction order) ----------
   std::unique_ptr<DummyStrategy> strategy_;
+  std::unique_ptr<OrderTracker> order_tracker_;
+  std::unique_ptr<PositionEngine> position_engine_;
   std::unique_ptr<RiskEngine> risk_engine_;
   std::unique_ptr<ExecutionEngine> execution_engine_;
-  std::unique_ptr<PositionEngine> position_engine_;
 
   // Tracks whether start() has been called (and stop() has not).
   bool running_{false};

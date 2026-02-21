@@ -127,7 +127,9 @@ TEST_F(PipelineIntegrationTest, FullPipelineEndToEnd) {
 
   risk_execution_loop.eventBus().subscribe<quant::ExecutionReportEvent>(
       [&promise](const quant::ExecutionReportEvent& e) {
-        promise.set_value(e);
+        if (e.status == quant::ExecutionStatus::Filled) {
+          promise.set_value(e);
+        }
       });
 
   // Inject one market data tick.
@@ -199,9 +201,11 @@ TEST_F(PipelineIntegrationTest, MultipleMarketDataEvents) {
   std::condition_variable cv;
 
   risk_execution_loop.eventBus().subscribe<quant::ExecutionReportEvent>(
-      [&report_count, &cv](const quant::ExecutionReportEvent&) {
-        report_count.fetch_add(1);
-        cv.notify_all();
+      [&report_count, &cv](const quant::ExecutionReportEvent& e) {
+        if (e.status == quant::ExecutionStatus::Filled) {
+          report_count.fetch_add(1);
+          cv.notify_all();
+        }
       });
 
   // Push N market data events with different sequence ids.
@@ -243,9 +247,11 @@ TEST_F(PipelineIntegrationTest, ShutdownDrainsQueue) {
   std::condition_variable cv;
 
   risk_execution_loop.eventBus().subscribe<quant::ExecutionReportEvent>(
-      [&report_count, &cv](const quant::ExecutionReportEvent&) {
-        report_count.fetch_add(1);
-        cv.notify_all();
+      [&report_count, &cv](const quant::ExecutionReportEvent& e) {
+        if (e.status == quant::ExecutionStatus::Filled) {
+          report_count.fetch_add(1);
+          cv.notify_all();
+        }
       });
 
   // Push event and immediately request strategy_loop shutdown.

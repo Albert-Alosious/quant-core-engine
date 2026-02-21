@@ -16,22 +16,33 @@ ExecutionEngine::ExecutionEngine(EventBus& bus) : bus_(bus) {
 ExecutionEngine::~ExecutionEngine() { bus_.unsubscribe(subscription_id_); }
 
 // -----------------------------------------------------------------------------
-// onOrder: simulate immediate fill and publish ExecutionReportEvent
+// onOrder: simulate two-step execution (Accepted → Filled)
 // -----------------------------------------------------------------------------
 void ExecutionEngine::onOrder(const OrderEvent& event) {
   const domain::Order& order = event.order;
+  auto ts = std::chrono::system_clock::now();
 
-  ExecutionReportEvent report;
-  report.order_id = order.id;
-  report.filled_quantity = order.quantity;
-  report.fill_price = order.price;
-  report.status = ExecutionStatus::Filled;
-  report.timestamp = std::chrono::system_clock::now();
-  report.sequence_id = event.sequence_id;  // reuse for demo
+  // --- Report 1: Accepted ---------------------------------------------------
+  ExecutionReportEvent ack;
+  ack.order_id = order.id;
+  ack.filled_quantity = 0.0;
+  ack.fill_price = 0.0;
+  ack.status = ExecutionStatus::Accepted;
+  ack.timestamp = ts;
+  ack.sequence_id = event.sequence_id;
 
-  // In a real engine, this would be asynchronous and depend on broker
-  // responses. Here we publish immediately to keep the example simple.
-  bus_.publish(report);
+  bus_.publish(ack);
+
+  // --- Report 2: Filled -----------------------------------------------------
+  ExecutionReportEvent fill;
+  fill.order_id = order.id;
+  fill.filled_quantity = order.quantity;
+  fill.fill_price = order.price;
+  fill.status = ExecutionStatus::Filled;
+  fill.timestamp = ts;
+  fill.sequence_id = event.sequence_id;
+
+  bus_.publish(fill);
 }
 
 }  // namespace quant

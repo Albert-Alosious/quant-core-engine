@@ -1,12 +1,13 @@
 // -----------------------------------------------------------------------------
 // quant_engine — single executable entry point (per architecture.md).
 //
-// Phase 2+3 "Simulation Mode with Position Tracking":
+// Phase 3 "Simulation Mode with Position Tracking & Order State Machine":
 //   1) Create a SimulationTimeProvider (the engine's clock for backtesting).
-//   2) Create the TradingEngine and start it. The engine now includes a
-//      PositionEngine on the risk/exec thread that tracks fills and PnL.
+//   2) Create the TradingEngine and start it. The engine includes:
+//      - OrderTracker: validates order lifecycle transitions (New→Accepted→Filled)
+//      - PositionEngine: tracks fills and computes PnL
 //   3) Subscribe logging callbacks to observe the full pipeline, including
-//      PositionUpdateEvent for real-time PnL visibility.
+//      OrderUpdateEvent and PositionUpdateEvent for real-time visibility.
 //   4) Create a MarketDataGateway that receives JSON ticks from Python over
 //      ZeroMQ, advances the simulation clock, and pushes MarketDataEvent
 //      into the engine's strategy loop.
@@ -17,16 +18,18 @@
 // Thread layout:
 //   main thread        → MarketDataGateway::run() (ZMQ recv loop)
 //   strategy thread    → DummyStrategy callbacks
-//   risk/exec thread   → RiskEngine + ExecutionEngine + PositionEngine
+//   risk/exec thread   → OrderTracker + PositionEngine + RiskEngine + ExecutionEngine
 //
 // No global state; TradingEngine owns the event loops and components.
 // SimulationTimeProvider and MarketDataGateway are stack-local in main().
 // -----------------------------------------------------------------------------
 
+#include "quant/domain/order_status.hpp"
 #include "quant/engine/trading_engine.hpp"
 #include "quant/events/event.hpp"
 #include "quant/events/event_types.hpp"
 #include "quant/events/execution_report_event.hpp"
+#include "quant/events/order_update_event.hpp"
 #include "quant/events/position_update_event.hpp"
 #include "quant/gateway/market_data_gateway.hpp"
 #include "quant/time/simulation_time_provider.hpp"
@@ -106,6 +109,28 @@ int main() {
                   << " net_qty=" << e.position.net_quantity
                   << " avg_price=" << e.position.average_price
                   << " realized_pnl=" << e.position.realized_pnl << "\n";
+      });
+
+  engine.riskExecutionEventBus().subscribe<quant::OrderUpdateEvent>(
+      [](const quant::OrderUpdateEvent& e) {
+        auto status_str = [](quant::domain::OrderStatus s) -> const char* {
+          using S = quant::domain::OrderStatus;
+          switch (s) {
+            case S::New:              return "New";
+            case S::PendingNew:       return "PendingNew";
+            case S::Accepted:         return "Accepted";
+            case S::PartiallyFilled:  return "PartiallyFilled";
+            case S::Filled:           return "Filled";
+            case S::Canceled:         return "Canceled";
+            case S::Rejected:         return "Rejected";
+            case S::Expired:          return "Expired";
+          }
+          return "Unknown";
+        };
+        std::cout << "[OrderUpdate] order_id=" << e.order.id
+                  << " symbol=" << e.order.symbol
+                  << " " << status_str(e.previous_status)
+                  << " -> " << status_str(e.order.status) << "\n";
       });
 
   // Also log MarketDataEvent arrival on the strategy bus to confirm the

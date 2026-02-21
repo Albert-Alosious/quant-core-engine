@@ -8,13 +8,25 @@ namespace quant {
 // -----------------------------------------------------------------------------
 // ExecutionStatus
 // -----------------------------------------------------------------------------
-// Responsibility: Encodes the outcome of an order at the execution layer.
-// Why a separate enum:
-// - Keeps execution-specific state out of the domain::Order type.
-// - Allows extension (e.g. PartiallyFilled, Cancelled) without changing the
-//   core order representation.
+//
+// @brief  Encodes the outcome reported by the execution layer for a specific
+//         order.
+//
+// @details
+// This is a wire-level enum describing what the execution layer observed.
+// It is distinct from domain::OrderStatus, which tracks the full internal
+// lifecycle. The OrderTracker maps ExecutionStatus → OrderStatus transitions.
+//
+// Values:
+//   Accepted — the execution layer has acknowledged the order and will
+//              attempt to fill it. Does not guarantee a fill.
+//   Filled   — the order (or a tranche of it) was filled at the reported
+//              price and quantity.
+//   Rejected — the order was rejected by the execution layer (e.g. invalid
+//              symbol, insufficient margin on the exchange side).
 // -----------------------------------------------------------------------------
 enum class ExecutionStatus {
+  Accepted,
   Filled,
   Rejected,
 };
