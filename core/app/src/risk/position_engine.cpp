@@ -22,6 +22,13 @@ PositionEngine::PositionEngine(EventBus& bus) : bus_(bus) {
 }
 
 // -----------------------------------------------------------------------------
+// hydratePosition: inject pre-existing position from exchange reconciliation
+// -----------------------------------------------------------------------------
+void PositionEngine::hydratePosition(const domain::Position& pos) {
+  positions_[pos.symbol] = pos;
+}
+
+// -----------------------------------------------------------------------------
 // Destructor: unsubscribe from both event streams
 // -----------------------------------------------------------------------------
 PositionEngine::~PositionEngine() {

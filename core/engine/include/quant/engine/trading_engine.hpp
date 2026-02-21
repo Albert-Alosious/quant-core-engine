@@ -3,6 +3,7 @@
 #include "quant/concurrent/event_loop_thread.hpp"
 #include "quant/concurrent/order_id_generator.hpp"
 #include "quant/execution/execution_engine.hpp"
+#include "quant/risk/i_reconciler.hpp"
 #include "quant/risk/order_tracker.hpp"
 #include "quant/risk/position_engine.hpp"
 #include "quant/risk/risk_engine.hpp"
@@ -47,7 +48,9 @@ namespace quant {
 //    ├── order_tracker_          (unique_ptr<OrderTracker>)
 //    ├── position_engine_        (unique_ptr<PositionEngine>)
 //    ├── risk_engine_            (unique_ptr<RiskEngine>)
-//    └── execution_engine_       (unique_ptr<ExecutionEngine>)
+//    ├── execution_engine_       (unique_ptr<ExecutionEngine>)
+//    └── reconciler              (IReconciler* — optional, non-owning, used
+//                                 only during start() synchronization gate)
 //
 // Components are heap-allocated (unique_ptr) so we can control destruction
 // order: components must be destroyed before the loops they reference.
@@ -70,16 +73,42 @@ class TradingEngine {
   TradingEngine& operator=(TradingEngine&&) = delete;
 
   // -------------------------------------------------------------------------
-  // start()
+  // start(reconciler)
   // -------------------------------------------------------------------------
-  // What: Starts both event loops, wires the cross-thread forwarder, and
-  // creates all components (DummyStrategy, RiskEngine, ExecutionEngine).
-  // Why: Single call to bring the engine to a running state. Idempotent —
-  // calling start() on an already-running engine does nothing.
-  // Thread-safety: Call from one thread only (main). Not meant for concurrent
-  // calls.
+  //
+  // @brief  Brings the engine to a running state, optionally reconciling
+  //         exchange state before processing any events.
+  //
+  // @param  reconciler  Optional non-owning pointer to an IReconciler. If
+  //                     non-null, the synchronization gate runs before event
+  //                     loop threads are spawned: positions and open orders
+  //                     from the exchange are injected into PositionEngine
+  //                     and OrderTracker respectively. If null (the default),
+  //                     the gate is skipped and the engine starts with empty
+  //                     state — appropriate for backtesting or fresh sessions.
+  //
+  // @details
+  // Startup sequence:
+  //   1. Create stateful components (OrderTracker, PositionEngine) — their
+  //      EventBus subscriptions are registered but no events flow yet.
+  //   2. Synchronization Gate (if reconciler != nullptr):
+  //      a) reconciler->reconcilePositions() → hydratePosition() for each
+  //      b) reconciler->reconcileOrders()    → hydrateOrder() for each
+  //   3. Start both EventLoopThreads (spawns worker threads).
+  //   4. Wire the cross-thread forwarder (SignalEvent bridging).
+  //   5. Create remaining components (DummyStrategy, RiskEngine,
+  //      ExecutionEngine) — their subscriptions are now live.
+  //
+  // This ordering guarantees that stateful components already contain the
+  // exchange baseline before any MarketDataEvent can trigger a fill.
+  //
+  // Idempotent: calling start() on an already-running engine does nothing.
+  //
+  // Thread-safety: Call from one thread only (main). Not meant for
+  //                concurrent calls.
+  // Side-effects:  Spawns two worker threads. May invoke reconciler I/O.
   // -------------------------------------------------------------------------
-  void start();
+  void start(IReconciler* reconciler = nullptr);
 
   // -------------------------------------------------------------------------
   // stop()

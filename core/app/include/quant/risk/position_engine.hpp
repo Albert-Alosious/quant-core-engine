@@ -115,6 +115,30 @@ class PositionEngine {
   PositionEngine(PositionEngine&&) = delete;
   PositionEngine& operator=(PositionEngine&&) = delete;
 
+  // -------------------------------------------------------------------------
+  // hydratePosition(pos)
+  // -------------------------------------------------------------------------
+  //
+  // @brief  Injects a pre-existing position into the internal positions map.
+  //
+  // @param  pos  A Position obtained from the exchange or a previous session.
+  //              The symbol, net_quantity, average_price, and realized_pnl
+  //              fields are all used as-is.
+  //
+  // @details
+  // **Warm-up only.** This method must be called from the main thread during
+  // the TradingEngine::start() synchronization gate — BEFORE event loop
+  // threads are spawned and before any MarketDataEvent is processed. It is
+  // NOT safe to call concurrently with onFill().
+  //
+  // The method does NOT publish a PositionUpdateEvent. Hydrated positions
+  // are historical state from a previous session, not live trading activity.
+  //
+  // Thread model: Main thread only, before event loops start.
+  // Side-effects: Inserts or overwrites positions_[pos.symbol].
+  // -------------------------------------------------------------------------
+  void hydratePosition(const domain::Position& pos);
+
  private:
   // Lightweight struct cached from OrderEvent. We only need symbol and side
   // to process the fill; storing the full domain::Order would be wasteful.

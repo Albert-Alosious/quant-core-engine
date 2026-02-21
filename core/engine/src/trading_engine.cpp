@@ -17,36 +17,65 @@ TradingEngine::~TradingEngine() { stop(); }
 // -----------------------------------------------------------------------------
 // start()
 // -----------------------------------------------------------------------------
-void TradingEngine::start() {
+void TradingEngine::start(IReconciler* reconciler) {
   if (running_) {
     return;  // Idempotent: already running.
   }
 
-  // ---  1) Start both event loops (spawns worker threads) -------------------
+  // ---  1) Create stateful components FIRST (before event loops start) ------
+  // OrderTracker and PositionEngine subscribe to their EventBus in their
+  // constructors. The EventBus is a value member of EventLoopThread and
+  // exists even before the loop's thread is spawned, so subscribe() is safe.
+  //
+  // These components must exist before the synchronization gate so we can
+  // call hydratePosition() and hydrateOrder() on the main thread.
+  //
+  // Subscriber ordering is preserved: OrderTracker subscribes first, then
+  // PositionEngine — matching the required callback invocation order.
+  order_tracker_ =
+      std::make_unique<OrderTracker>(risk_execution_loop_.eventBus());
+  position_engine_ =
+      std::make_unique<PositionEngine>(risk_execution_loop_.eventBus());
+
+  // ---  2) Synchronization Gate (optional) ----------------------------------
+  // If a reconciler is provided, query the exchange for pre-existing state
+  // and inject it into the stateful components. This runs on the main thread
+  // before any event loop thread is spawned — no race conditions.
+  if (reconciler != nullptr) {
+    auto positions = reconciler->reconcilePositions();
+    for (const auto& pos : positions) {
+      position_engine_->hydratePosition(pos);
+    }
+
+    auto orders = reconciler->reconcileOrders();
+    for (const auto& order : orders) {
+      order_tracker_->hydrateOrder(order);
+    }
+
+    std::cout << "[TradingEngine] Reconciliation complete: "
+              << positions.size() << " position(s), "
+              << orders.size() << " open order(s) hydrated.\n";
+  }
+
+  // ---  3) Start both event loops (spawns worker threads) -------------------
   strategy_loop_.start();
   risk_execution_loop_.start();
 
-  // ---  2) Wire the cross-thread forwarder ----------------------------------
+  // ---  4) Wire the cross-thread forwarder ----------------------------------
   // SignalEvent published on the strategy_loop bus is pushed into the
   // risk_execution_loop queue. This is the only place where events cross
   // the thread boundary. The forwarder runs on the strategy_loop thread.
   strategy_loop_.eventBus().subscribe<SignalEvent>(
       [this](const SignalEvent& e) { risk_execution_loop_.push(e); });
 
-  // ---  3) Create components ------------------------------------------------
+  // ---  5) Create remaining components --------------------------------------
   // Components subscribe to their loop's EventBus in their constructors.
   // Creation order determines callback invocation order for the same event
   // type, because EventBus stores subscribers in registration order.
   //
   // Required ordering on the risk_execution_loop:
-  //   1. OrderTracker FIRST — subscribes to OrderEvent to register orders
-  //      in its active map (status=New) before any other component sees
-  //      the OrderEvent. Also subscribes to ExecutionReportEvent to
-  //      advance order lifecycle state.
-  //   2. PositionEngine — subscribes to OrderEvent to cache
-  //      {order_id → symbol, side}. This cache must be populated BEFORE
-  //      ExecutionEngine processes the same OrderEvent and publishes
-  //      synchronous ExecutionReportEvents.
+  //   1. OrderTracker FIRST (already created in step 1)
+  //   2. PositionEngine (already created in step 1)
   //   3. RiskEngine — subscribes to SignalEvent, publishes OrderEvent.
   //   4. ExecutionEngine — subscribes to OrderEvent, publishes
   //      ExecutionReportEvent (Accepted then Filled). OrderTracker's and
@@ -57,10 +86,6 @@ void TradingEngine::start() {
   // DummyStrategy lives on the strategy_loop, so its creation order
   // relative to risk_execution_loop components does not matter.
   strategy_ = std::make_unique<DummyStrategy>(strategy_loop_.eventBus());
-  order_tracker_ =
-      std::make_unique<OrderTracker>(risk_execution_loop_.eventBus());
-  position_engine_ =
-      std::make_unique<PositionEngine>(risk_execution_loop_.eventBus());
   risk_engine_ =
       std::make_unique<RiskEngine>(risk_execution_loop_.eventBus(),
                                    order_id_gen_);

@@ -90,6 +90,32 @@ class OrderTracker {
   OrderTracker& operator=(OrderTracker&&) = delete;
 
   // -------------------------------------------------------------------------
+  // hydrateOrder(order)
+  // -------------------------------------------------------------------------
+  //
+  // @brief  Injects a pre-existing open order into the active orders map.
+  //
+  // @param  order  An Order obtained from the exchange during reconciliation.
+  //                The order's status field must reflect the exchange's
+  //                current state (e.g., Accepted, PartiallyFilled). The
+  //                OrderTracker does NOT validate this status — the exchange
+  //                is the source of truth.
+  //
+  // @details
+  // **Warm-up only.** This method must be called from the main thread during
+  // the TradingEngine::start() synchronization gate — BEFORE event loop
+  // threads are spawned and before any ExecutionReportEvent is processed. It
+  // is NOT safe to call concurrently with onOrder() or onExecutionReport().
+  //
+  // The method does NOT publish an OrderUpdateEvent. Hydrated orders are
+  // existing exchange state, not new lifecycle transitions.
+  //
+  // Thread model: Main thread only, before event loops start.
+  // Side-effects: Inserts or overwrites active_orders_[order.id].
+  // -------------------------------------------------------------------------
+  void hydrateOrder(const domain::Order& order);
+
+  // -------------------------------------------------------------------------
   // transitionStatus(current, next)
   // -------------------------------------------------------------------------
   // @brief  Validates whether a state transition is legal according to the

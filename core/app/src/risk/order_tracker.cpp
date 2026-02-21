@@ -17,6 +17,13 @@ OrderTracker::OrderTracker(EventBus& bus) : bus_(bus) {
 }
 
 // -----------------------------------------------------------------------------
+// hydrateOrder: inject pre-existing order from exchange reconciliation
+// -----------------------------------------------------------------------------
+void OrderTracker::hydrateOrder(const domain::Order& order) {
+  active_orders_[order.id] = order;
+}
+
+// -----------------------------------------------------------------------------
 // Destructor: unsubscribe from both event streams
 // -----------------------------------------------------------------------------
 OrderTracker::~OrderTracker() {
