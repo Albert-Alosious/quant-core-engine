@@ -25,11 +25,12 @@ void RiskEngine::onSignal(const SignalEvent& event) {
   // callbacks run on the risk_execution_loop thread—no concurrent writers.
   domain::OrderId id = next_order_id_++;
 
-  // Build the domain Order. For this minimal example we map:
+  // Build the domain Order. Maps signal fields to order fields:
   // - strategy_id and symbol directly from the signal
   // - side: SignalEvent::Side -> domain::Side
-  // - quantity: 1.0 (dummy size)
-  // - price: 0.0 (dummy; a real engine would use market/limit price here)
+  // - quantity: 1.0 (dummy size; a real engine derives from signal.strength)
+  // - price: propagated from the signal's market price so downstream
+  //   execution reports and the PositionEngine have the correct fill price
   domain::Order order;
   order.id = id;
   order.strategy_id = event.strategy_id;
@@ -38,7 +39,7 @@ void RiskEngine::onSignal(const SignalEvent& event) {
                    ? domain::Side::Buy
                    : domain::Side::Sell;
   order.quantity = 1.0;
-  order.price = 0.0;
+  order.price = event.price;
 
   // Wrap in OrderEvent so it flows through the EventBus as part of the
   // Event variant, carrying optional event-level metadata.

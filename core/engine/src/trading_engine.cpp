@@ -35,12 +35,26 @@ void TradingEngine::start() {
 
   // ---  3) Create components ------------------------------------------------
   // Components subscribe to their loop's EventBus in their constructors.
-  // Order matters:
-  //   - DummyStrategy subscribes to MarketDataEvent on strategy_loop.
-  //   - RiskEngine subscribes to SignalEvent on risk_execution_loop.
-  //   - ExecutionEngine subscribes to OrderEvent on risk_execution_loop.
-  // This matches the event pipeline order.
+  // Creation order determines callback invocation order for the same event
+  // type, because EventBus stores subscribers in registration order.
+  //
+  // Required ordering on the risk_execution_loop:
+  //   1. PositionEngine FIRST — subscribes to OrderEvent to cache
+  //      {order_id → symbol, side}. This cache must be populated BEFORE
+  //      ExecutionEngine processes the same OrderEvent and publishes a
+  //      synchronous ExecutionReportEvent (which PositionEngine's onFill
+  //      handler will receive inline).
+  //   2. RiskEngine — subscribes to SignalEvent, publishes OrderEvent.
+  //   3. ExecutionEngine — subscribes to OrderEvent, publishes
+  //      ExecutionReportEvent synchronously. PositionEngine's OrderEvent
+  //      callback has already fired (it was registered first), so the
+  //      order cache is warm when onFill runs.
+  //
+  // DummyStrategy lives on the strategy_loop, so its creation order
+  // relative to risk_execution_loop components does not matter.
   strategy_ = std::make_unique<DummyStrategy>(strategy_loop_.eventBus());
+  position_engine_ =
+      std::make_unique<PositionEngine>(risk_execution_loop_.eventBus());
   risk_engine_ =
       std::make_unique<RiskEngine>(risk_execution_loop_.eventBus());
   execution_engine_ =
@@ -63,9 +77,12 @@ void TradingEngine::stop() {
   // ---  1) Destroy components first -----------------------------------------
   // Components unsubscribe from the bus in their destructors. This must happen
   // before we stop the loops, otherwise a callback could fire on a destroyed
-  // component. Reverse creation order for symmetry.
+  // component. Reverse creation order:
+  //   Created: strategy, position_engine, risk_engine, execution_engine
+  //   Destroy: execution_engine, risk_engine, position_engine, strategy
   execution_engine_.reset();
   risk_engine_.reset();
+  position_engine_.reset();
   strategy_.reset();
 
   // ---  2) Stop event loops (joins worker threads) --------------------------

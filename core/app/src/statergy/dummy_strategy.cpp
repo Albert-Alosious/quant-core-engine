@@ -37,12 +37,15 @@ void DummyStrategy::onMarketData(const MarketDataEvent& event) {
 
   // Build the signal from the market data. Strategy never calls execution—
   // it only publishes an event. The bus and forwarder will deliver it to
-  // risk_execution_loop.
+  // risk_execution_loop. The market price is carried through so the risk
+  // layer can set the order price and downstream fill reports reflect the
+  // actual market price.
   SignalEvent signal;
   signal.strategy_id = kStrategyId;
   signal.symbol = event.symbol;
   signal.side = SignalEvent::Side::Buy;
   signal.strength = 1.0;
+  signal.price = event.price;
   signal.timestamp = std::chrono::system_clock::now();
   signal.sequence_id = event.sequence_id;
 

@@ -1,10 +1,12 @@
 // -----------------------------------------------------------------------------
 // quant_engine — single executable entry point (per architecture.md).
 //
-// Phase 2 "Simulation Mode":
+// Phase 2+3 "Simulation Mode with Position Tracking":
 //   1) Create a SimulationTimeProvider (the engine's clock for backtesting).
-//   2) Create the TradingEngine and start it.
-//   3) Subscribe logging callbacks to observe the full pipeline.
+//   2) Create the TradingEngine and start it. The engine now includes a
+//      PositionEngine on the risk/exec thread that tracks fills and PnL.
+//   3) Subscribe logging callbacks to observe the full pipeline, including
+//      PositionUpdateEvent for real-time PnL visibility.
 //   4) Create a MarketDataGateway that receives JSON ticks from Python over
 //      ZeroMQ, advances the simulation clock, and pushes MarketDataEvent
 //      into the engine's strategy loop.
@@ -15,7 +17,7 @@
 // Thread layout:
 //   main thread        → MarketDataGateway::run() (ZMQ recv loop)
 //   strategy thread    → DummyStrategy callbacks
-//   risk/exec thread   → RiskEngine + ExecutionEngine callbacks
+//   risk/exec thread   → RiskEngine + ExecutionEngine + PositionEngine
 //
 // No global state; TradingEngine owns the event loops and components.
 // SimulationTimeProvider and MarketDataGateway are stack-local in main().
@@ -25,6 +27,7 @@
 #include "quant/events/event.hpp"
 #include "quant/events/event_types.hpp"
 #include "quant/events/execution_report_event.hpp"
+#include "quant/events/position_update_event.hpp"
 #include "quant/gateway/market_data_gateway.hpp"
 #include "quant/time/simulation_time_provider.hpp"
 
@@ -95,6 +98,14 @@ int main() {
                                                                  : "Rejected")
                   << " qty=" << e.filled_quantity << " price=" << e.fill_price
                   << "\n";
+      });
+
+  engine.riskExecutionEventBus().subscribe<quant::PositionUpdateEvent>(
+      [](const quant::PositionUpdateEvent& e) {
+        std::cout << "[PositionUpdate] symbol=" << e.position.symbol
+                  << " net_qty=" << e.position.net_quantity
+                  << " avg_price=" << e.position.average_price
+                  << " realized_pnl=" << e.position.realized_pnl << "\n";
       });
 
   // Also log MarketDataEvent arrival on the strategy bus to confirm the

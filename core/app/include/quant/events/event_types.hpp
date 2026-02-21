@@ -36,15 +36,21 @@ struct MarketDataEvent {
 // SignalEvent
 // -----------------------------------------------------------------------------
 // Responsibility: Carries a trading signal produced by a strategy (e.g. "buy
-// AAPL with strength 0.8").
+// AAPL with strength 0.8 at price 150.25").
 // Why in architecture: Strategy thread publishes these; the router/risk layer
 // subscribes. Strategy never calls execution directly—it only emits events.
+//
+// The `price` field carries the market price that triggered the signal. This
+// propagates through to the domain::Order and ultimately to the
+// ExecutionReportEvent fill price, enabling the PositionEngine to compute
+// correct average_price and realized_pnl.
 // -----------------------------------------------------------------------------
 struct SignalEvent {
   std::string strategy_id;  // Which strategy produced this signal
   std::string symbol;        // Instrument to trade
   enum class Side { Buy, Sell } side{Side::Buy};  // Scoped enum: type-safe
   double strength{0.0};       // Signal strength or size hint (strategy-defined)
+  double price{0.0};          // Market price that triggered this signal
   Timestamp timestamp{};
   std::uint64_t sequence_id{0};
 };
